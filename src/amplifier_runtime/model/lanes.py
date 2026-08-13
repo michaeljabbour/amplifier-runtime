@@ -1,0 +1,525 @@
+"""Agent lanes: per-subagent state keyed by session id (DESIGN-SPEC §8).
+
+Every amplifier event payload carries ``session_id`` + ``parent_id`` —
+that pair is the entire routing key for lanes. The registry tolerates
+events arriving before their parent lane exists (``session:start`` can
+race ``task:agent_spawned`` — RESEARCH-BRIEF risk 5): a lane registered
+with an unknown ``parent_id`` still routes; depth is patched when the
+parent appears.
+
+Lane line format: ``  <glyph> <name> · <activity> · <elapsed> · $<cost>``
+with glyph/color per state: ``◐`` teal running, ``■`` fg working, ``✔``
+dim done, ``!`` orange attention, ``✖`` red error, ``⊘`` red cancelled (D5 AC1
+— the error/cancelled glyphs are the SAME ones ``ui/transcript_render.py``'s
+``_DELEGATE_GLYPHS`` already uses for the delegate-summary block, so a
+lane and its post-turn summary row read consistently).
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from collections.abc import Sequence
+from decimal import Decimal
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from .blocks import GLYPH_ATTENTION, GLYPH_BLOCKED, GLYPH_ERROR, StyleToken
+
+LaneStateName = Literal[
+    "booting", "running", "working", "attention", "done", "incomplete", "error", "cancelled"
+]
+"""The full lane lifecycle (D5 AC1).
+
+``booting``/``running``/``working`` are ordinary in-flight phases (a
+spawned child with no event yet, idle, and mid-tool-call respectively) —
+this is the "waiting"/"active" half of the design note's "consistent
+active, waiting, blocked, completed, and failed states" ask. ``attention``
+is the missing live state: a discrete failure signal (a tool error or failed
+tool result), a pending child approval, or a denied/blocked child action
+surfaced against a lane that is STILL RUNNING — driven by
+``ui/reducer.py``'s ``_track_child_activity`` from the same normalized event
+envelope that drives the global approval control (not a parallel flag).
+Those signals bypass repaint coalescing as ``kind="error"``/``"attention"``.
+``done``/``error``/
+``cancelled`` are the three terminal outcomes — :data:`TERMINAL_LANE_STATES`
+— replacing the old fold-everything-into-``done`` behavior where a
+failure's only trace was free-text activity. ``error``/``cancelled``
+mirror ``model.blocks.DelegateState`` verbatim (``ui/reducer.py``'s
+``_DelegateRow``/``DelegateSummaryBlock`` already distinguished
+success/failure/cancellation for the post-turn summary; lanes now derive
+from the SAME signals instead of maintaining a parallel notion — see
+``_agent_completed`` and ``_finish_turn``).
+
+Pending approval and blocked are deliberately not extra lifecycle states:
+the lane remains active in ``attention`` and its ``activity`` names the exact
+latest need (``approval needed · …`` / ``blocked · …``). The normalized
+``ApprovalRequired``/``ApprovalGranted``/``ApprovalDenied`` session id selects
+the lane; a grant or fresh tool attempt clears it back to active work.
+"""
+
+_STATE_GLYPHS: dict[LaneStateName, tuple[str, StyleToken]] = {
+    # A spawned child whose session has produced no event yet (bundle
+    # composition can run ~tens of seconds). The original spec glyph set
+    # (§8) was closed to 3 states, so booting reuses the running glyph; the
+    # panel row instead swaps the zeroed telemetry cells for the honest
+    # ``booting · Ns`` clock (see ``ui/lanes_panel.py``).
+    "booting": ("◐", "teal"),
+    "running": ("◐", "teal"),
+    "working": ("■", "fg"),
+    "attention": (GLYPH_ATTENTION, "orange"),
+    "done": ("✔", "dim"),
+    "incomplete": (GLYPH_ATTENTION, "orange"),
+    "error": (GLYPH_ERROR, "red"),
+    "cancelled": (GLYPH_BLOCKED, "red"),
+}
+
+TERMINAL_LANE_STATES: frozenset[LaneStateName] = frozenset(
+    {"done", "incomplete", "error", "cancelled"}
+)
+"""Lane states that will never change again — the ONE place "is this lane
+finished" is defined, so :class:`LaneRegistry` (active/tail/advance/reopen)
+and the reducer's child-activity guard can never drift out of sync on what
+counts as terminal."""
+
+_TERMINAL_VERBS: dict[LaneStateName, str] = {
+    "done": "done",
+    "incomplete": "incomplete",
+    "error": "failed",
+    "cancelled": "cancelled",
+}
+"""Human-facing verb for :meth:`LaneRegistry.complete`'s activity text —
+``error`` reads as "failed" (matching the chat's own ✳ lifecycle marker
+wording, e.g. ``researcher failed · migration blew up``), not the internal
+state name."""
+
+_REDACTED_SESSION_RE = re.compile(r"^\[REDACTED:[^\]]+\](?P<suffix>.+)$")
+
+
+def _redacted_suffix(session_id: str) -> str | None:
+    match = _REDACTED_SESSION_RE.match(session_id)
+    if match is None:
+        return None
+    suffix = match.group("suffix")
+    # Foundation sub-session suffixes are long random identifiers. Avoid
+    # fuzzy-routing short redacted fragments that could match two lanes.
+    return suffix if len(suffix) >= 12 else None
+
+
+def _compatible_session_ids(left: str, right: str) -> bool:
+    """Match a redacted spawn id to the real child ``session:start`` id."""
+    left_suffix = _redacted_suffix(left)
+    right_suffix = _redacted_suffix(right)
+    if left_suffix is not None:
+        return right.endswith(left_suffix)
+    if right_suffix is not None:
+        return left.endswith(right_suffix)
+    return False
+
+
+class LaneState(BaseModel):
+    """One subagent lane's presentation state.
+
+    - ``name``: agent name (e.g. ``test-writer``).
+    - ``glyph``/``color_token``: derived from ``state`` at construction
+      via :meth:`for_state` — kept as fields so a lane snapshot is fully
+      renderable without lookups.
+    - ``activity``: current one-line activity description.
+    - ``elapsed``: seconds since spawn; ``cost``: dollars spent so far.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    glyph: str
+    color_token: StyleToken
+    activity: str = ""
+    elapsed: float = Field(default=0.0, ge=0)
+    tokens: int = Field(default=0, ge=0)
+    cost: Decimal = Field(default=Decimal("0"), ge=0)
+    state: LaneStateName = "running"
+
+    @classmethod
+    def for_state(
+        cls,
+        *,
+        name: str,
+        state: LaneStateName,
+        activity: str = "",
+        elapsed: float = 0.0,
+        tokens: int = 0,
+        cost: Decimal = Decimal("0"),
+    ) -> LaneState:
+        """Build a lane with the spec glyph/color for *state*."""
+        glyph, color = _STATE_GLYPHS[state]
+        return cls(
+            name=name,
+            glyph=glyph,
+            color_token=color,
+            activity=activity,
+            elapsed=elapsed,
+            tokens=tokens,
+            cost=cost,
+            state=state,
+        )
+
+
+class LaneRecord(BaseModel):
+    """A lane plus its routing identity in the session tree."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    session_id: str
+    parent_id: str | None
+    depth: int = Field(default=1, ge=0)
+    started_at: float = Field(default=0.0, ge=0)
+    turn: int = Field(default=0, ge=0)
+    """The 1-indexed turn (``_Turn.turn_id``) that spawned this lane (D6
+    AC4: every visible stream states its producing agent AND its turn).
+    ``0`` means unknown -- a defensive fallback for a spawn observed
+    outside any tracked turn (never expected live), or a caller (tests,
+    demo backstory seeds) that never had turn context to give. Rendering
+    surfaces treat ``0`` as "omit", never as a literal ``turn 0``."""
+    lane: LaneState
+
+
+class LaneRegistry:
+    """All live/finished lanes keyed by ``session_id``, routed by ``parent_id``.
+
+    Mutable by design (one per app). ``register`` opens a lane on
+    ``task:agent_spawned``/``session:start``; ``update`` patches activity/
+    telemetry from any child-stamped event; ``complete`` closes it on
+    ``task:agent_completed``. Unknown-parent registration is tolerated and
+    depth is retro-patched when the parent lane appears.
+
+    Concurrency invariant: every writer — the reducer (event consumer,
+    heartbeat ``advance``) and the app (``cycle_tail_focus``) — runs on the
+    single UI event loop; the runtime thread never touches this registry
+    (events are marshalled via the adapter's call_soon_threadsafe queue).
+    Methods are synchronous with no awaits, so mutations are atomic under
+    cooperative scheduling. Do not call from other threads.
+    """
+
+    def __init__(self) -> None:
+        self._records: dict[str, LaneRecord] = {}
+        self._order: list[str] = []
+        self._aliases: dict[str, str] = {}
+        self._pending_sessions: dict[str, str | None] = {}
+        self._tail_focus: str | None = None
+        self._tail_recent: str | None = None
+
+    @property
+    def lanes(self) -> tuple[LaneRecord, ...]:
+        """All lanes in registration order (the lanes panel listing)."""
+        return tuple(self._records[sid] for sid in self._order)
+
+    @property
+    def active(self) -> tuple[LaneRecord, ...]:
+        return tuple(r for r in self.lanes if r.lane.state not in TERMINAL_LANE_STATES)
+
+    @property
+    def active_count(self) -> int:
+        """Drives ``N agent(s)`` in the working line and the coordinating title."""
+        return len(self.active)
+
+    def get(self, session_id: str) -> LaneRecord | None:
+        key = self._resolve_id(session_id)
+        return self._records.get(key) if key is not None else None
+
+    def children_of(self, parent_id: str) -> tuple[LaneRecord, ...]:
+        return tuple(r for r in self.lanes if r.parent_id == parent_id)
+
+    def register(
+        self,
+        session_id: str,
+        *,
+        parent_id: str | None,
+        name: str,
+        activity: str = "",
+        state: LaneStateName = "running",
+        reopen: bool = False,
+        now: float = 0.0,
+        turn: int = 0,
+    ) -> LaneRecord:
+        """Open a lane for a spawned subagent.
+
+        Idempotent for known session ids by default (``session:start`` can
+        race ``task:agent_spawned``, and a completion that raced ahead of
+        its spawn must stay done). With ``reopen=True`` a *finished* lane
+        spawned again (a replayed demo turn reuses its sub-session ids) is
+        reset to a fresh spawned state so the panel shows the live
+        tri-state glyphs instead of a stale ``✔ done`` -- ``turn`` is
+        re-stamped too, so a reused sub-session id spawned under a LATER
+        turn reports that turn, not the one it first opened under (D6 AC4).
+        """
+        existing_key = self._resolve_id(session_id)
+        existing = self._records.get(existing_key) if existing_key is not None else None
+        if existing is not None:
+            if (
+                reopen
+                and existing.lane.state in TERMINAL_LANE_STATES
+                and state not in TERMINAL_LANE_STATES
+            ):
+                fresh = existing.model_copy(
+                    update={
+                        "started_at": now,
+                        "turn": turn,
+                        "lane": LaneState.for_state(name=name, state=state, activity=activity),
+                    }
+                )
+                self._records[session_id] = fresh
+                return fresh
+            return existing
+        parent = self._records.get(parent_id) if parent_id else None
+        record = LaneRecord(
+            session_id=session_id,
+            parent_id=parent_id,
+            depth=(parent.depth + 1) if parent else 1,
+            started_at=now,
+            turn=turn,
+            lane=LaneState.for_state(name=name, state=state, activity=activity),
+        )
+        self._records[session_id] = record
+        self._order.append(session_id)
+        self._patch_child_depths(session_id)
+        for actual_id, actual_parent in tuple(self._pending_sessions.items()):
+            if _compatible_session_ids(session_id, actual_id) and (
+                actual_parent is None or actual_parent == parent_id
+            ):
+                rebound = self.bind_session(actual_id, parent_id=actual_parent)
+                if rebound is not None:
+                    return rebound
+        return record
+
+    def bind_session(self, session_id: str, *, parent_id: str | None) -> LaneRecord | None:
+        """Bind a real child session id to its possibly-redacted spawn lane.
+
+        Foundation governance can redact the leading portion of
+        ``task:agent_spawned.sub_session_id`` while the child's later
+        ``session:start`` and usage events carry the usable id. Re-keying
+        here restores exact telemetry routing and makes lane focus open the
+        real child transcript. The redacted id remains an alias so the
+        corresponding ``task:agent_completed`` still closes the lane.
+        """
+        key = self._resolve_id(session_id, parent_id=parent_id)
+        if key is None:
+            self._pending_sessions[session_id] = parent_id
+            return None
+        self._pending_sessions.pop(session_id, None)
+        if key == session_id:
+            return self._records[key]
+        if _redacted_suffix(key) is None or _redacted_suffix(session_id) is not None:
+            self._aliases[session_id] = key
+            return self._records[key]
+        return self._rekey(key, session_id, parent_id=parent_id)
+
+    def update(
+        self,
+        session_id: str,
+        *,
+        activity: str | None = None,
+        elapsed: float | None = None,
+        tokens: int | None = None,
+        cost: Decimal | None = None,
+        state: LaneStateName | None = None,
+    ) -> LaneRecord | None:
+        """Patch a lane's live fields; returns None for unknown lanes
+        (events for sessions we never saw spawn are dropped, not fatal)."""
+        key = self._resolve_id(session_id)
+        record = self._records.get(key) if key is not None else None
+        if record is None:
+            return None
+        lane = record.lane
+        new_state = state or lane.state
+        updated = LaneState.for_state(
+            name=lane.name,
+            state=new_state,
+            activity=lane.activity if activity is None else activity,
+            elapsed=lane.elapsed if elapsed is None else elapsed,
+            tokens=lane.tokens if tokens is None else tokens,
+            cost=lane.cost if cost is None else cost,
+        )
+        patched = record.model_copy(update={"lane": updated})
+        assert key is not None
+        self._records[key] = patched
+        return patched
+
+    def advance(self, now: float) -> bool:
+        """Bump each running lane's ``elapsed`` to ``now - started_at``.
+
+        Driven by the app's 1s heartbeat (via ``reducer.tick``) so a
+        subagent's per-lane clock ticks live between the sparse usage
+        events. Done lanes are frozen; lanes with no ``started_at`` (never
+        stamped at spawn) are left alone. Returns True if any lane moved.
+        """
+        changed = False
+        for session_id, record in self._records.items():
+            if record.lane.state in TERMINAL_LANE_STATES or record.started_at <= 0:
+                continue
+            elapsed = now - record.started_at
+            if elapsed < 0 or elapsed == record.lane.elapsed:
+                continue
+            updated = record.lane.model_copy(update={"elapsed": elapsed})
+            self._records[session_id] = record.model_copy(update={"lane": updated})
+            changed = True
+        return changed
+
+    def complete(
+        self, session_id: str, *, result: str = "", state: LaneStateName = "done"
+    ) -> LaneRecord | None:
+        """Settle a lane at its terminal transition, recording its result summary.
+
+        ``state`` is one of :data:`TERMINAL_LANE_STATES` — ``done`` (``✔``,
+        success, the default), ``error`` (``✖``, failure) or ``cancelled``
+        (``⊘``, the turn ended while this lane was still going). The caller
+        (``ui/reducer.py``'s ``_agent_completed`` / ``_finish_turn``) passes
+        the SAME success/cancellation signal it already computes for the
+        delegate-summary row — this is not a second, independently-derived
+        outcome (D5 AC1).
+        """
+        verb = _TERMINAL_VERBS.get(state, state)
+        activity = f"{verb} · {result}" if result else verb
+        return self.update(session_id, state=state, activity=activity)
+
+    # -- lane tail focus (DESIGN-SPEC §8: live tail) ------------------------
+
+    @property
+    def tail_lane(self) -> LaneRecord | None:
+        """The lane whose stream feeds the live tail.
+
+        An explicit ctrl-o choice wins while that lane still runs; then the
+        most-recently-streaming running lane; then the first running lane.
+        None when nothing is running (the tail goes dark).
+        """
+        for candidate in (self._tail_focus, self._tail_recent):
+            if candidate is None:
+                continue
+            key = self._resolve_id(candidate)
+            record = self._records.get(key) if key is not None else None
+            if record is not None and record.lane.state not in TERMINAL_LANE_STATES:
+                return record
+        active = self.active
+        return active[0] if active else None
+
+    def note_stream_activity(self, session_id: str) -> None:
+        """Record *session_id* as the most-recently-streaming lane.
+
+        Unknown or finished lanes are dropped, not fatal (same tolerance
+        as :meth:`update`).
+        """
+        key = self._resolve_id(session_id)
+        record = self._records.get(key) if key is not None else None
+        if record is not None and record.lane.state not in TERMINAL_LANE_STATES:
+            self._tail_recent = key
+
+    def cycle_tail_focus(self) -> LaneRecord | None:
+        """Pin the tail to the next running lane (ctrl-o), in lane order."""
+        active = self.active
+        if not active:
+            self._tail_focus = None
+            return None
+        ids = [record.session_id for record in active]
+        current = self.tail_lane
+        if current is not None and current.session_id in ids:
+            index = (ids.index(current.session_id) + 1) % len(ids)
+        else:
+            index = 0
+        self._tail_focus = ids[index]
+        return self._records[ids[index]]
+
+    def _patch_child_depths(self, parent_id: str) -> None:
+        """Fix depths of children registered before their parent (spawn race)."""
+        parent = self._records[parent_id]
+        for child in self.children_of(parent_id):
+            expected = parent.depth + 1
+            if child.depth != expected:
+                self._records[child.session_id] = child.model_copy(update={"depth": expected})
+                self._patch_child_depths(child.session_id)
+
+    def _resolve_id(self, session_id: str, *, parent_id: str | None = None) -> str | None:
+        if session_id in self._records:
+            return session_id
+        alias = self._aliases.get(session_id)
+        if alias in self._records:
+            return alias
+        matches = [
+            key
+            for key, record in self._records.items()
+            if _compatible_session_ids(key, session_id)
+            and (parent_id is None or record.parent_id == parent_id)
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    def _rekey(self, old_id: str, new_id: str, *, parent_id: str | None) -> LaneRecord:
+        record = self._records.pop(old_id)
+        rebound = record.model_copy(
+            update={
+                "session_id": new_id,
+                "parent_id": parent_id if parent_id is not None else record.parent_id,
+            }
+        )
+        self._records[new_id] = rebound
+        self._order[self._order.index(old_id)] = new_id
+        self._aliases[old_id] = new_id
+        for alias, target in tuple(self._aliases.items()):
+            if target == old_id:
+                self._aliases[alias] = new_id
+        for child_id, child in tuple(self._records.items()):
+            if child.parent_id == old_id:
+                self._records[child_id] = child.model_copy(update={"parent_id": new_id})
+        self._patch_child_depths(new_id)
+        return rebound
+
+
+def _short_lane_id(session_id: str) -> str:
+    """A short, stable disambiguator drawn from a session id.
+
+    Governance redaction can wrap ids in ``[REDACTED:…]`` brackets; those
+    (and any other non-alphanumeric noise) are stripped, then the LAST four
+    usable characters are taken. Foundation prefixes sibling sub-sessions
+    with a shared timestamp, so the random tail disambiguates where the head
+    would not. Falls back to the whole cleaned id when shorter than four.
+    """
+    cleaned = re.sub(r"\[[^\]]*\]", "", session_id)
+    cleaned = "".join(ch for ch in cleaned if ch.isalnum())
+    return cleaned[-4:] if len(cleaned) >= 4 else cleaned
+
+
+def lane_labels(records: Sequence[LaneRecord]) -> tuple[str, ...]:
+    """Display labels for a lane listing, disambiguating same-named agents.
+
+    Two delegates of the same agent (e.g. two ``test-writer`` lanes) render
+    byte-identical rows — ambiguous the moment the supervisor tries to tell
+    them apart. Every lane whose ``name`` is shared gets a short session-id
+    tag appended (``test-writer #a1b2``); uniquely-named lanes are returned
+    unchanged. A rare tail collision (two ids ending the same four chars)
+    falls back to a stable 1-based ordinal within the group, so the labels
+    are always distinct and deterministic in registration order.
+    """
+    counts = Counter(record.lane.name for record in records)
+    ordinals: dict[str, int] = {}
+    used: set[str] = set()
+    labels: list[str] = []
+    for record in records:
+        name = record.lane.name
+        if not name or counts[name] == 1:
+            labels.append(name)
+            continue
+        ordinals[name] = ordinals.get(name, 0) + 1
+        tag = _short_lane_id(record.session_id)
+        label = f"{name} #{tag}" if tag else f"{name} #{ordinals[name]}"
+        if label in used:
+            label = f"{name} #{ordinals[name]}"
+        used.add(label)
+        labels.append(label)
+    return tuple(labels)
+
+
+__all__ = [
+    "LaneRecord",
+    "LaneRegistry",
+    "LaneState",
+    "LaneStateName",
+    "lane_labels",
+]

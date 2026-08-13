@@ -1,0 +1,1386 @@
+"""THE event contract: raw amplifier hook payloads → typed ``UIEvent``s.
+
+All amplifier-core events are normalized at exactly this one boundary
+(ADR-0007). Both channels are consumed and kept independent:
+
+- **Channel A** (live deltas, ad-hoc provider events):
+  ``llm:stream_block_start/delta/end``, ``llm:stream_aborted``.
+- **Channel B** (durable records, orchestrator events): ``tool:pre/post/
+  error``, ``content_block:start/end``, ``orchestrator:complete``, and the
+  Attractor ``pipeline:*`` graph lifecycle.
+
+Never reconstruct one channel from the other. Tool correlation is by
+``tool_call_id`` only — never ``tool_name`` (parallel calls of the same
+tool run concurrently).
+
+This module is intentionally **pure**: dict in, pydantic model out. It
+imports neither amplifier-core nor Textual, so the whole contract is
+testable with nothing but pydantic installed. :func:`normalize` absorbs
+the payload variance documented in RESEARCH-BRIEF §2:
+
+- delta text under ``delta`` | ``text`` | ``content``;
+- ``task:agent_spawned``/``task:agent_completed`` vs the legacy
+  ``task:spawned``/``task:completed`` names;
+- tool results under ``result`` vs ``tool_response``;
+- provider usage flat or nested under ``usage``, with cache counters
+  under ``cache_read_input_tokens``/``cache_read`` etc.
+
+Every event carries the envelope ``{event_id, session_id, parent_id,
+ts}``. ``session_id``/``parent_id`` come from the payload (stamped by
+``hooks.set_default_fields``) and are the entire lane-routing key.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Mapping, Sequence
+from decimal import Decimal, InvalidOperation
+from itertools import count
+from typing import Annotated, Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+
+from ..model.blocks import UnsupportedBlock
+from ..model.redaction import scrub_text
+
+_event_counter = count(1)
+
+
+def _mint_event_id() -> str:
+    return f"ev{next(_event_counter)}"
+
+
+class _Envelope(BaseModel):
+    """Common envelope on every normalized event."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: str = Field(default_factory=_mint_event_id)
+    session_id: str = ""
+    parent_id: str | None = None
+    ts: float = Field(default_factory=time.time)
+
+
+# --------------------------------------------------------------------------
+# Channel A — live streaming deltas
+# --------------------------------------------------------------------------
+
+
+class StreamBlockStart(_Envelope):
+    """A streaming content block opened (``llm:stream_block_start``)."""
+
+    kind: Literal["stream_block_start"] = "stream_block_start"
+    request_id: str = ""
+    block_index: int = 0
+    block_type: str = "text"
+    name: str = ""
+
+
+class StreamBlockDelta(_Envelope):
+    """One incremental text/thinking chunk (``llm:stream_block_delta``).
+
+    ``text`` is canonical regardless of which raw key (``delta`` /
+    ``text`` / ``content``) the provider used.
+    """
+
+    kind: Literal["stream_block_delta"] = "stream_block_delta"
+    request_id: str = ""
+    block_index: int = 0
+    block_type: str = "text"
+    sequence: int = 0
+    text: str = ""
+
+
+class StreamBlockEnd(_Envelope):
+    """A streaming block closed — consolidate the live tail now."""
+
+    kind: Literal["stream_block_end"] = "stream_block_end"
+    request_id: str = ""
+    block_index: int = 0
+    block_type: str = "text"
+
+
+class StreamAborted(_Envelope):
+    """The stream died mid-flight (``llm:stream_aborted``)."""
+
+    kind: Literal["stream_aborted"] = "stream_aborted"
+    request_id: str = ""
+    error_type: str = ""
+    error_message: str = ""
+
+
+# --------------------------------------------------------------------------
+# Channel B — durable tool / content records
+# --------------------------------------------------------------------------
+
+
+class ToolPre(_Envelope):
+    """A tool call is about to run (``tool:pre``) — open the tool line."""
+
+    kind: Literal["tool_pre"] = "tool_pre"
+    tool_name: str = ""
+    tool_call_id: str = ""
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    parallel_group_id: str | None = None
+
+
+class ToolPost(_Envelope):
+    """A tool call finished (``tool:post``) — finalize + expandable body.
+
+    ``result`` is the normalized payload whether the raw event used
+    ``result`` or ``tool_response``.
+    """
+
+    kind: Literal["tool_post"] = "tool_post"
+    tool_name: str = ""
+    tool_call_id: str = ""
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolError(_Envelope):
+    """A tool call failed (``tool:error``)."""
+
+    kind: Literal["tool_error"] = "tool_error"
+    tool_name: str = ""
+    tool_call_id: str = ""
+    error_type: str = ""
+    error_message: str = ""
+
+
+class ContentBlockStart(_Envelope):
+    """Durable content block opened (``content_block:start``)."""
+
+    kind: Literal["content_block_start"] = "content_block_start"
+    block_type: str = "text"
+    block_index: int = 0
+    total_blocks: int = 0
+
+
+class ContentBlockEnd(_Envelope):
+    """Durable content block record (``content_block:end``) — the atomic,
+    non-incremental source of truth for answer/thinking text."""
+
+    kind: Literal["content_block_end"] = "content_block_end"
+    block_type: str = "text"
+    block_index: int = 0
+    total_blocks: int = 0
+    block: dict[str, Any] = Field(default_factory=dict)
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
+class OrchestratorComplete(_Envelope):
+    """The orchestrator loop ended (``orchestrator:complete``)."""
+
+    kind: Literal["orchestrator_complete"] = "orchestrator_complete"
+    orchestrator: str = ""
+    turn_count: int = 0
+    status: Literal["success", "cancelled", "incomplete"] = "success"
+
+
+class GoalProgress(_Envelope):
+    """Native ``loop-streaming`` goal-loop progress.
+
+    The schema is emitted by Amplifier's orchestrator.  The TUI preserves
+    its fields for durable replay and only renders them; it never evaluates
+    the goal or decides whether another turn should run.
+    """
+
+    kind: Literal["goal_progress"] = "goal_progress"
+    orchestrator: str = ""
+    state: str = ""
+    turn: int = 0
+    continuations: int = 0
+    cap: int | None = None
+    reason: str | None = None
+    reasons: tuple[str, ...] = ()
+    stall_detail: str | None = None
+    summary: str | None = None
+    distinct_blockers: int = 0
+    stall_verdict: str | None = None
+    condition: str | None = None
+    schema_version: int = 0
+
+
+# --------------------------------------------------------------------------
+# Pipeline lifecycle (Attractor graph execution)
+# --------------------------------------------------------------------------
+
+
+class PipelineStarted(_Envelope):
+    """A DOT pipeline began (``pipeline:start``).
+
+    ``dot_source`` deliberately rides inline: it is the immutable graph
+    definition needed to rebuild a visual pipeline after ``history.replay``;
+    later progress records only mutate node/edge state.
+    """
+
+    kind: Literal["pipeline_started"] = "pipeline_started"
+    graph_name: str = ""
+    node_count: int = 0
+    edge_count: int = 0
+    goal: str = ""
+    dot_source: str = ""
+
+
+PipelineProgressPhase = Literal["node_started", "node_completed", "edge_selected"]
+
+
+class PipelineProgress(_Envelope):
+    """One durable node or edge transition in a running DOT pipeline.
+
+    Attractor publishes three raw event names for graph mutation. They share
+    this typed record so protocol clients can fold one ordered stream into
+    graph state without retaining upstream hook payloads.
+    """
+
+    kind: Literal["pipeline_progress"] = "pipeline_progress"
+    phase: PipelineProgressPhase
+    node_id: str = ""
+    handler_type: str = ""
+    status: str = ""
+    attempt: int = 0
+    execution_index: int = 0
+    duration_ms: float = 0.0
+    notes: str = ""
+    failure_reason: str = ""
+    node_session_id: str = ""
+    from_node: str = ""
+    to_node: str = ""
+    edge_label: str = ""
+    branch_id: str = ""
+    via_parallel: bool = False
+
+
+class PipelineCheckpoint(_Envelope):
+    """Attractor persisted restart state after a node (``pipeline:checkpoint``)."""
+
+    kind: Literal["pipeline_checkpoint"] = "pipeline_checkpoint"
+    node_id: str = ""
+    checkpoint_path: str = ""
+    branch_id: str = ""
+
+
+class PipelineComplete(_Envelope):
+    """A DOT pipeline reached its terminal outcome (``pipeline:complete``)."""
+
+    kind: Literal["pipeline_complete"] = "pipeline_complete"
+    status: str = ""
+    total_nodes_executed: int = 0
+    duration_ms: float = 0.0
+    branch_id: str = ""
+
+
+# --------------------------------------------------------------------------
+# Turn / execution lifecycle
+# --------------------------------------------------------------------------
+
+
+class PromptSubmit(_Envelope):
+    """A user prompt entered the engine (``prompt:submit``) — the turn
+    boundary where the app stamps its monotonic turn_id.
+
+    ``mode`` records the app posture (``chat``/``plan``/``brainstorm``/
+    ``build``/``auto``) active when the prompt was submitted, so the
+    durable ui-events.jsonl log preserves which posture a historical turn
+    ran under. On resume replay the reducer stamps this onto the user
+    line's ``[mode]`` badge instead of the current live posture. Empty on
+    legacy logs (pre-stamp) — the reducer then falls back to live mode.
+    """
+
+    kind: Literal["prompt_submit"] = "prompt_submit"
+    prompt: str = ""
+    mode: str = ""
+    workspace_checkpoint_id: str = ""
+    """Opaque kernel file-checkpoint id cut before prompt execution."""
+
+
+class PromptComplete(_Envelope):
+    """The prompt's turn finished (``prompt:complete``).
+
+    The real runtime synthesizes this close-out event itself (after its
+    end-of-turn git snapshot) and enriches it with the turn's concrete
+    yield — the reducer turns these fields into the DESIGN-SPEC §3
+    shipped outcome (``3 files · +142/−38 · tests ✔``). Raw hook payloads
+    normalized here carry only ``response``; the yield fields default off.
+    """
+
+    kind: Literal["prompt_complete"] = "prompt_complete"
+    response: str = ""
+    files_changed: int = 0
+    """Files whose diffstat changed during the turn (git snapshot delta)."""
+    diffstat: str = ""
+    """``+142/−38`` style line-delta label; empty when nothing changed."""
+    tests_ok: bool | None = None
+    """True/False when test commands ran this turn; None when they did not."""
+
+
+class ExecutionStart(_Envelope):
+    """Engine execution started (``execution:start``)."""
+
+    kind: Literal["execution_start"] = "execution_start"
+
+
+class ExecutionEnd(_Envelope):
+    """Engine execution ended (``execution:end``)."""
+
+    kind: Literal["execution_end"] = "execution_end"
+
+
+# --------------------------------------------------------------------------
+# Provider telemetry / notices
+# --------------------------------------------------------------------------
+
+
+class ProviderResponseUsage(_Envelope):
+    """Token usage from one provider response (``provider:response``).
+
+    Drives live token counting, cache %, and per-turn cost (kernel
+    SessionStatus counters are NOT populated — the app computes cost from
+    these numbers itself).
+    """
+
+    kind: Literal["provider_response_usage"] = "provider_response_usage"
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read: int = 0
+    cache_write: int = 0
+    model: str = ""
+    cost_usd: Decimal | None = None
+    """Provider-reported cost when available (e.g. loop-streaming's
+    ``content_block:end`` usage payload) — authoritative over the local
+    pricing-table estimate."""
+
+
+ProviderErrorCategory = Literal["auth", "quota", "network", "timeout", "model", "unknown"]
+"""App-local classification of a provider failure (WS8 phase 1)."""
+
+
+class ProviderNotice(_Envelope):
+    """Provider error/retry/throttle notice (footer transient).
+
+    ``message`` is the verbatim provider text scrubbed at this boundary
+    (never truncated — clipping is a display concern). ``category`` /
+    ``provider`` classify the failure from the payload's error type,
+    status code and message; both are additive and default off for
+    legacy persisted records.
+    """
+
+    kind: Literal["provider_notice"] = "provider_notice"
+    notice: Literal["error", "retry", "throttle"] = "error"
+    message: str = ""
+    category: ProviderErrorCategory = "unknown"
+    provider: str = ""
+
+
+# --------------------------------------------------------------------------
+# Session lifecycle
+# --------------------------------------------------------------------------
+
+
+class SessionStart(_Envelope):
+    kind: Literal["session_start"] = "session_start"
+
+
+class SessionEnd(_Envelope):
+    kind: Literal["session_end"] = "session_end"
+
+
+class SessionFork(_Envelope):
+    """A session forked (rewind); ``source_session_id`` is the parent."""
+
+    kind: Literal["session_fork"] = "session_fork"
+    source_session_id: str = ""
+
+
+class SessionResume(_Envelope):
+    kind: Literal["session_resume"] = "session_resume"
+
+
+class RewindMarker(_Envelope):
+    """A confirmed rewind boundary, persisted to the append-only log.
+
+    The ui-events log never truncates, so a resume would otherwise replay
+    the turns a rewind discarded (ghost turns). This marker is written to
+    the log at fork time (never a raw hook — the app synthesizes it) and
+    honored at read time by :func:`drop_rewound_events`: everything after
+    the ``kept_turns``-th surviving turn, up to this marker, is dropped
+    before the events reach the reducer.
+
+    - ``checkpoint_id``: the rewind target (``t2`` …), for diagnostics.
+    - ``kept_turns``: how many ``prompt_submit``-delimited turns survive
+      from the start of the reconstructed timeline (the target's 1-indexed
+      ledger position at fork time — which equals its position in the
+      ghost-filtered replay, one checkpoint per completed turn).
+    """
+
+    kind: Literal["rewind_marker"] = "rewind_marker"
+    checkpoint_id: str = ""
+    kept_turns: int = Field(default=0, ge=0)
+
+
+# --------------------------------------------------------------------------
+# Approvals / cancellation
+# --------------------------------------------------------------------------
+
+
+class ApprovalRequired(_Envelope):
+    """An approval is being requested (``approval:required``).
+
+    ``options`` always contains the verbatim strings ``Allow once`` /
+    ``Allow always`` / ``Deny`` (Rust fail-closed string matching).
+    """
+
+    kind: Literal["approval_required"] = "approval_required"
+    prompt: str = ""
+    options: tuple[str, ...] = ()
+
+
+class ApprovalGranted(_Envelope):
+    kind: Literal["approval_granted"] = "approval_granted"
+    prompt: str = ""
+    choice: str = ""
+
+
+class ApprovalDenied(_Envelope):
+    """An approval was denied (``approval:denied``).
+
+    ``command`` is the blocked thing for the ⊘ line (falls back to
+    ``prompt``); ``continuation`` is the deny-and-continue note
+    (DESIGN-SPEC §7: ``continuing without <thing>``).
+    """
+
+    kind: Literal["approval_denied"] = "approval_denied"
+    prompt: str = ""
+    reason: str = ""
+    command: str = ""
+    continuation: str = ""
+
+
+class CancelRequested(_Envelope):
+    """Interrupt requested (``cancel:requested``) — esc while running."""
+
+    kind: Literal["cancel_requested"] = "cancel_requested"
+
+
+class CancelCompleted(_Envelope):
+    """Interrupt landed at a step boundary (``cancel:completed``)."""
+
+    kind: Literal["cancel_completed"] = "cancel_completed"
+
+
+# --------------------------------------------------------------------------
+# Subagents / notifications
+# --------------------------------------------------------------------------
+
+
+class AgentSpawned(_Envelope):
+    """A subagent lane opened (``task:agent_spawned`` / ``task:spawned``)."""
+
+    kind: Literal["agent_spawned"] = "agent_spawned"
+    agent: str = ""
+    sub_session_id: str = ""
+    parent_session_id: str = ""
+
+
+class AgentCompleted(_Envelope):
+    """A subagent finished (``task:agent_completed`` / ``task:completed``)."""
+
+    kind: Literal["agent_completed"] = "agent_completed"
+    agent: str = ""
+    sub_session_id: str = ""
+    parent_session_id: str = ""
+    success: bool = True
+    incomplete: bool = False
+    """The child stopped at a turn/token cap or returned without executing."""
+    result: str = ""
+    """Short result summary for the lane line (e.g. ``tests ✔``)."""
+
+
+class AgentResumed(_Envelope):
+    """A subagent lane reopened (``delegate:agent_resumed``).
+
+    The resume payload carries only the child ``session_id`` (already the
+    envelope's own field) and ``parent_session_id`` -- no ``agent`` name.
+    That's intentional: the lane already exists from the original spawn
+    event, keyed by ``sub_session_id``, so there's nothing new to key on
+    here and ``agent`` is left empty rather than guessed.
+    """
+
+    kind: Literal["agent_resumed"] = "agent_resumed"
+    agent: str = ""
+    parent_session_id: str = ""
+
+
+class Notification(_Envelope):
+    """User-facing notice (``user:notification``) → transient notice slot."""
+
+    kind: Literal["notification"] = "notification"
+    message: str = ""
+    level: str = "info"
+    source: str = ""
+    decision_id: str = ""
+    """NeedsYouQueue id when ``level == "decision"``: the deferral already
+    parked its item kernel-side; the app resolves that item instead of
+    re-deriving one from the message text. Empty for scripted/legacy
+    notices — the adapter then supplies the decision data."""
+    # -- deferred-decision detail (additive, ``level == "decision"``) ------
+    # The in-process TUI reads the parked NeedsYouItem straight off the
+    # shared queue, but a protocol client (serve) only sees this event —
+    # without these fields the wire genuinely lacked the escalation reason
+    # and choices, so the client could render neither the WHY line nor
+    # actionable chips. All default-empty: additive for old readers.
+    question: str = ""
+    reason: str = ""
+    """The governance escalation / classifier denial reason (the WHY)."""
+    choices: tuple[str, ...] = ()
+    descriptions: tuple[str, ...] = ()
+    """Per-choice option help, aligned to ``choices`` (question tool). Empty
+    for governance decisions -- additive, so old readers ignore it."""
+    multiple: bool = False
+    """Question tool: multi-select (the answer is comma-joined labels)."""
+    custom: bool = False
+    """Question tool: a free-text answer is allowed (donor ``custom``)."""
+    highlight: str = ""
+    action: str = ""
+    """The denied action this decision defers (raw command text)."""
+
+
+class ContextInjected(_Envelope):
+    """A persistent user-role context message was injected mid-turn.
+
+    Emitted by the runtime when the StepBoundaryBridge applies a steer
+    and/or answered deferred decisions (one combined injection message
+    per step boundary). Foundation's fork slicing counts EVERY user-role
+    message as a turn boundary, so checkpoint turn ids must advance past
+    these injections (DESIGN-SPEC §9)."""
+
+    kind: Literal["context_injected"] = "context_injected"
+    source: str = "steering"
+
+
+class ContextCompacted(_Envelope):
+    """The mounted context compacted its request view."""
+
+    kind: Literal["context_compacted"] = "context_compacted"
+    before_tokens: int = 0
+    after_tokens: int = 0
+    before_messages: int = 0
+    after_messages: int = 0
+    strategy_level: int = 0
+    budget: int = 0
+    """Effective provider-derived request budget used for this pass."""
+    target_tokens: int = 0
+    """The compactor's post-pass target within :attr:`budget`."""
+    messages_removed: int = 0
+    messages_truncated: int = 0
+    user_messages_stubbed: int = 0
+
+
+UIEvent = Annotated[
+    StreamBlockStart
+    | StreamBlockDelta
+    | StreamBlockEnd
+    | StreamAborted
+    | ToolPre
+    | ToolPost
+    | ToolError
+    | ContentBlockStart
+    | ContentBlockEnd
+    | OrchestratorComplete
+    | GoalProgress
+    | PipelineStarted
+    | PipelineProgress
+    | PipelineCheckpoint
+    | PipelineComplete
+    | PromptSubmit
+    | PromptComplete
+    | ExecutionStart
+    | ExecutionEnd
+    | ProviderResponseUsage
+    | ProviderNotice
+    | SessionStart
+    | SessionEnd
+    | SessionFork
+    | SessionResume
+    | RewindMarker
+    | ApprovalRequired
+    | ApprovalGranted
+    | ApprovalDenied
+    | CancelRequested
+    | CancelCompleted
+    | AgentSpawned
+    | AgentCompleted
+    | AgentResumed
+    | Notification
+    | ContextInjected
+    | ContextCompacted,
+    Field(discriminator="kind"),
+]
+"""Discriminated union of every normalized UI event (on ``kind``)."""
+
+
+_EVENT_ADAPTER: TypeAdapter[UIEvent] = TypeAdapter(UIEvent)
+"""Built once — TypeAdapter construction over the full union is costly."""
+
+
+_UNSUPPORTED_TYPE_MAX = 60
+"""Bounded length for an :class:`UnsupportedBlock` ``type_name`` — a
+hostile/oversized ``kind``/``event`` value must not blow out the row."""
+
+_UNSUPPORTED_SUMMARY_MAX_KEYS = 8
+_UNSUPPORTED_SUMMARY_MAX_LEN = 160
+
+
+def _unsupported_type_name(record: Mapping[str, Any]) -> str:
+    """The record's own type label when recoverable, else ``"unknown"``.
+
+    Tries this schema's discriminator (``kind``) first, then the raw hook
+    event name (``event``) a foreign writer would carry — never a guess,
+    and bounded so a hostile/oversized value cannot blow out the row.
+    """
+    name = _str(record, "kind", "event") or "unknown"
+    return name[:_UNSUPPORTED_TYPE_MAX]
+
+
+def _unsupported_summary(record: Mapping[str, Any]) -> str:
+    """A short, SAFE description of *record*'s shape for support/debugging.
+
+    Field NAMES only, sorted and bounded — NEVER values. Values are
+    exactly what this must not keep: prompt/tool/thinking text, tokens,
+    paths, or anything else a foreign writer or a future schema might
+    carry that this build cannot classify as safe to display.
+    """
+    keys = sorted(str(key) for key in record.keys())
+    shown = keys[:_UNSUPPORTED_SUMMARY_MAX_KEYS]
+    extra = len(keys) - len(shown)
+    body = ", ".join(shown) if shown else "no fields"
+    if extra > 0:
+        body += f", +{extra} more"
+    return f"fields: {body}"[:_UNSUPPORTED_SUMMARY_MAX_LEN]
+
+
+ParsedEvent = UIEvent | UnsupportedBlock
+"""Either a successfully typed event, or a redacted
+:class:`~amplifier_runtime.model.blocks.UnsupportedBlock` placeholder for a
+record :func:`parse_event` could not type — see there."""
+
+
+def parse_event(
+    record: Mapping[str, Any],
+    *,
+    source_path: str = "",
+    source_line: int | None = None,
+) -> ParsedEvent:
+    """Round-trip one stored event record back into a typed :class:`UIEvent`.
+
+    The inverse of ``event.model_dump(mode="json")`` as persisted by
+    ``SessionStore.append_event`` — powers resume transcript replay
+    (DESIGN-SPEC §3/§11: digests, delegate summaries and turn rules are
+    "reconstructed from events.jsonl on resume"). Returns a redacted
+    :class:`~amplifier_runtime.model.blocks.UnsupportedBlock` placeholder —
+    never ``None`` — for foreign records: the event log can carry other
+    writers' lines today, and the frozen ``extra="forbid"`` envelope makes
+    any raw hook payload or unknown ``kind`` fail validation rather than
+    half-parse. The placeholder keeps the record's TYPE NAME and a redacted,
+    field-names-only summary — never the raw payload, which may carry
+    secrets or arbitrary tool/user content — so a resumed session stays
+    visible and usable instead of silently losing the line (S5).
+
+    ``source_path``/``source_line`` are optional and keyword-only — pure
+    round-trip callers (tests building a placeholder straight from a dict)
+    omit them and get the pre-S5-AC2 shape back. The one caller that reads
+    from a real log, :func:`~amplifier_runtime.kernel.runtime.restored_ui_events`,
+    supplies them (via :meth:`~amplifier_runtime.kernel.persistence.SessionStore.read_events_located`)
+    so an ``UnsupportedBlock`` this call returns carries a safe RECOVERY
+    REFERENCE — where to find the original record — never the record's own
+    content.
+    """
+    try:
+        return _EVENT_ADAPTER.validate_python(dict(record))
+    except ValidationError:
+        return UnsupportedBlock(
+            type_name=_unsupported_type_name(record),
+            summary=_unsupported_summary(record),
+            source_path=source_path,
+            source_line=source_line,
+        )
+
+
+def drop_rewound_events(events: Sequence[ParsedEvent]) -> list[ParsedEvent]:
+    """Filter post-rewind ghost turns out of a persisted event stream.
+
+    The ui-events log is append-only, so a confirmed rewind leaves the
+    turns it discarded sitting in the log; a naive resume replays them as
+    ghost turns (issue #40). At fork time the app writes a
+    :class:`RewindMarker` recording how many ``prompt_submit``-delimited
+    turns survive from the start of the timeline. This honors those
+    markers by segmenting the stream into turns and truncating back to the
+    marker's ``kept_turns`` each time one is seen — the inverse, read-side
+    half of the append-only contract.
+
+    Turns are renumbered implicitly by position, so nested and repeated
+    rewinds compose: each marker's ``kept_turns`` counts the turns that
+    already survived earlier markers, exactly as the live ledger counted
+    them when the marker was written. Events before the first prompt
+    (session-start preamble) are always kept; the markers themselves are
+    dropped from the result. :class:`UnsupportedBlock` placeholders carry
+    no turn semantics of their own — they simply ride along inside
+    whichever turn (or the preamble) they were interleaved with.
+    """
+    preamble: list[ParsedEvent] = []
+    turns: list[list[ParsedEvent]] = []
+    current = preamble
+    for event in events:
+        if isinstance(event, RewindMarker):
+            keep = max(0, min(event.kept_turns, len(turns)))
+            del turns[keep:]
+            current = turns[-1] if turns else preamble
+            continue
+        if isinstance(event, PromptSubmit):
+            turns.append([event])
+            current = turns[-1]
+        else:
+            current.append(event)
+    result = list(preamble)
+    for turn in turns:
+        result.extend(turn)
+    return result
+
+
+# --------------------------------------------------------------------------
+# Normalization
+# --------------------------------------------------------------------------
+
+
+def _str(data: Mapping[str, Any], *keys: str, default: str = "") -> str:
+    for key in keys:
+        value = data.get(key)
+        if value is not None:
+            return str(value)
+    return default
+
+
+def _int(data: Mapping[str, Any], *keys: str, default: int = 0) -> int:
+    for key in keys:
+        value = data.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _float(data: Mapping[str, Any], *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        value = data.get(key)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _cost_usd(data: Mapping[str, Any]) -> Decimal | None:
+    value = data.get("cost_usd")
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def usage_from_content_block_end(event: "ContentBlockEnd") -> "ProviderResponseUsage | None":
+    """Synthesize provider telemetry from a ``content_block:end`` usage payload.
+
+    The streaming orchestrator does not fire ``provider:response`` hooks;
+    each response's usage (including a provider-computed ``cost_usd``)
+    rides on every content block. Emit it only for the final block so one
+    provider response is counted once. A missing ``total_blocks`` remains
+    the legacy single-block shape. Without this, real-mode turn rules and
+    the footer read ``0.0k tok · $0.00`` forever.
+    """
+    usage = event.usage
+    if not usage or (event.total_blocks > 0 and event.block_index != event.total_blocks - 1):
+        return None
+    return ProviderResponseUsage(
+        session_id=event.session_id,
+        parent_id=event.parent_id,
+        input_tokens=_int(usage, "input_tokens", "prompt_tokens"),
+        output_tokens=_int(usage, "output_tokens", "completion_tokens"),
+        cache_read=_int(usage, "cache_read", "cache_read_input_tokens", "cache_read_tokens"),
+        cache_write=_int(usage, "cache_write", "cache_creation_input_tokens", "cache_write_tokens"),
+        cost_usd=_cost_usd(usage),
+    )
+
+
+def recipe_approval_prompt(data: Mapping[str, Any]) -> str:
+    """One prompt string for a ``recipe:approval`` gate.
+
+    Used by :func:`normalize` (durable ApprovalRequired record) AND the
+    kernel recipe bridge's broker ask, so the approval bar and the event
+    log show the same text. Names the recipe and stage explicitly — a
+    bare gate prompt like "Continue?" is meaningless without them.
+    """
+    recipe = _str(data, "name") or "recipe"
+    stage = _str(data, "stage_name")
+    gate = _str(data, "prompt") or (
+        f"Approve completion of stage '{stage}'?" if stage else "Approve to continue?"
+    )
+    subject = f"Recipe '{recipe}'" + (f" · stage '{stage}'" if stage else "")
+    return f"{subject} — {gate}"
+
+
+def _dict(data: Mapping[str, Any], *keys: str) -> dict[str, Any]:
+    for key in keys:
+        value = data.get(key)
+        if isinstance(value, Mapping):
+            return dict(value)
+        if value is not None:
+            # Non-mapping results (bare strings, model dumps as str) are
+            # preserved rather than dropped.
+            return {"value": value}
+    return {}
+
+
+def _error_fields(data: Mapping[str, Any]) -> tuple[str, str]:
+    """Extract (type, message) from ``error`` dicts or flat keys."""
+    error = data.get("error")
+    if isinstance(error, Mapping):
+        return (
+            _str(error, "type", "error_type"),
+            _str(error, "msg", "message", "error_message"),
+        )
+    if isinstance(error, str):
+        return ("", error)
+    return (_str(data, "error_type"), _str(data, "error_message", "msg", "message"))
+
+
+def _envelope(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract the common envelope fields from a raw payload."""
+    fields: dict[str, Any] = {
+        "session_id": _str(data, "session_id"),
+        "parent_id": data.get("parent_id") or None,
+    }
+    event_id = _str(data, "event_id")
+    if event_id:
+        fields["event_id"] = event_id
+    ts = data.get("ts", data.get("timestamp"))
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        fields["ts"] = float(ts)
+    return fields
+
+
+def _usage_source(data: Mapping[str, Any]) -> Mapping[str, Any]:
+    usage = data.get("usage")
+    return usage if isinstance(usage, Mapping) else data
+
+
+_ORCH_STATUSES = frozenset({"success", "cancelled", "incomplete"})
+_NOTICE_KINDS: dict[str, str] = {
+    "provider:error": "error",
+    "provider:retry": "retry",
+    "provider:throttle": "throttle",
+}
+
+_PROVIDER_ERROR_SIGNALS: dict[ProviderErrorCategory, tuple[str, ...]] = {
+    "auth": (
+        "401",
+        "403",
+        "authenticationerror",
+        "invalid_api_key",
+        "api key",
+        "unauthorized",
+        "forbidden",
+    ),
+    "quota": (
+        "429",
+        "ratelimiterror",
+        "rate limit",
+        "rate_limit",
+        "insufficient_quota",
+        "too many requests",
+        "quota",
+    ),
+    "timeout": (
+        "408",
+        "504",
+        "apitimeouterror",
+        "timed out",
+        "timeout",
+        "deadline exceeded",
+    ),
+    "network": (
+        "apiconnectionerror",
+        "connectionerror",
+        "connection",
+        "econnrefused",
+        "unreachable",
+        "dns",
+    ),
+    "model": (
+        "404",
+        "notfounderror",
+        "model_not_found",
+        "model-not-found",
+        "no such model",
+        "unknown model",
+        "does not exist",
+    ),
+}
+"""Signal fragments → failure category, in match order (first hit wins).
+
+Checked case-insensitively against the notice's error type, status code
+and scrubbed message. Ordered so ``timeout`` beats ``network`` (a
+"connection timed out" carries both) and ``unknown`` is the default.
+"""
+
+
+def _classify_provider_error(*parts: str) -> ProviderErrorCategory:
+    haystack = " ".join(part for part in parts if part).lower()
+    for category, signals in _PROVIDER_ERROR_SIGNALS.items():
+        if any(signal in haystack for signal in signals):
+            return category
+    return "unknown"
+
+
+def normalize(event_name: str, data: Mapping[str, Any] | None) -> UIEvent | None:
+    """Normalize one raw hook payload into a typed :class:`UIEvent`.
+
+    Returns ``None`` for event names the UI does not consume — callers
+    drop those silently. Never raises on missing payload keys: unknown
+    shapes degrade to defaulted fields, because a rendering pipeline must
+    not crash on provider payload drift.
+    """
+    payload: Mapping[str, Any] = data or {}
+    env = _envelope(payload)
+
+    match event_name:
+        # -- Channel A -----------------------------------------------------
+        case "llm:stream_block_start":
+            return StreamBlockStart(
+                **env,
+                request_id=_str(payload, "request_id"),
+                block_index=_int(payload, "block_index", "index"),
+                block_type=_str(payload, "block_type", default="text"),
+                name=_str(payload, "name"),
+            )
+        case "llm:stream_block_delta":
+            return StreamBlockDelta(
+                **env,
+                request_id=_str(payload, "request_id"),
+                block_index=_int(payload, "block_index", "index"),
+                block_type=_str(payload, "block_type", default="text"),
+                sequence=_int(payload, "sequence", "seq"),
+                # Payload variance: delta | text | content (RESEARCH-BRIEF §2).
+                text=_str(payload, "delta", "text", "content"),
+            )
+        case "llm:stream_block_end":
+            return StreamBlockEnd(
+                **env,
+                request_id=_str(payload, "request_id"),
+                block_index=_int(payload, "block_index", "index"),
+                block_type=_str(payload, "block_type", default="text"),
+            )
+        case "llm:stream_aborted":
+            error_type, error_message = _error_fields(payload)
+            return StreamAborted(
+                **env,
+                request_id=_str(payload, "request_id"),
+                error_type=error_type,
+                error_message=error_message,
+            )
+        # -- Channel B -----------------------------------------------------
+        case "tool:pre":
+            return ToolPre(
+                **env,
+                tool_name=_str(payload, "tool_name", "name"),
+                tool_call_id=_str(payload, "tool_call_id", "tool_use_id", "id"),
+                tool_input=_dict(payload, "tool_input", "input"),
+                parallel_group_id=payload.get("parallel_group_id") or None,
+            )
+        case "tool:post":
+            return ToolPost(
+                **env,
+                tool_name=_str(payload, "tool_name", "name"),
+                tool_call_id=_str(payload, "tool_call_id", "tool_use_id", "id"),
+                tool_input=_dict(payload, "tool_input", "input"),
+                # Payload variance: result | tool_response (RESEARCH-BRIEF §2).
+                result=_dict(payload, "result", "tool_response", "response"),
+            )
+        case "tool:error":
+            error_type, error_message = _error_fields(payload)
+            return ToolError(
+                **env,
+                tool_name=_str(payload, "tool_name", "name"),
+                tool_call_id=_str(payload, "tool_call_id", "tool_use_id", "id"),
+                error_type=error_type,
+                error_message=error_message,
+            )
+        case "content_block:start":
+            return ContentBlockStart(
+                **env,
+                block_type=_str(payload, "block_type", default="text"),
+                block_index=_int(payload, "block_index", "index"),
+                total_blocks=_int(payload, "total_blocks"),
+            )
+        case "content_block:end":
+            block = _dict(payload, "block")
+            return ContentBlockEnd(
+                **env,
+                block_type=_str(
+                    payload,
+                    "block_type",
+                    default=_str(block, "type", default="text"),
+                ),
+                block_index=_int(payload, "block_index", "index"),
+                total_blocks=_int(payload, "total_blocks"),
+                block=block,
+                usage=_dict(payload, "usage"),
+            )
+        case "orchestrator:complete":
+            status = _str(payload, "status", default="success")
+            return OrchestratorComplete(
+                **env,
+                orchestrator=_str(payload, "orchestrator"),
+                turn_count=_int(payload, "turn_count"),
+                status=status if status in _ORCH_STATUSES else "incomplete",  # type: ignore[arg-type]
+            )
+        case "orchestrator:goal_progress":
+            state = _str(payload, "state")
+            raw_reasons = payload.get("reasons")
+            # The native payload carries the cumulative evaluator history and
+            # fully-expanded condition on EVERY progress event. Persisting
+            # both in ui-events.jsonl would grow an unlimited goal O(n^2) and
+            # repeatedly copy @file contents. Canonical hooks logging retains
+            # the raw payload; the UI log keeps only the last three reasons on
+            # terminal states and never duplicates expanded condition text.
+            reasons: tuple[str, ...] = ()
+            if (
+                state != "continuing"
+                and isinstance(raw_reasons, Sequence)
+                and not isinstance(raw_reasons, str)
+            ):
+                reasons = tuple(str(reason) for reason in raw_reasons[-3:])
+            raw_cap = payload.get("cap")
+            cap = _int(payload, "cap") if raw_cap is not None else None
+            return GoalProgress(
+                **env,
+                orchestrator=_str(payload, "orchestrator"),
+                state=state,
+                turn=_int(payload, "turn"),
+                continuations=_int(payload, "continuations"),
+                cap=cap if cap and cap > 0 else None,
+                reason=str(payload["reason"]) if payload.get("reason") is not None else None,
+                reasons=reasons,
+                stall_detail=(
+                    str(payload["stall_detail"])
+                    if payload.get("stall_detail") is not None
+                    else None
+                ),
+                summary=str(payload["summary"]) if payload.get("summary") is not None else None,
+                distinct_blockers=_int(payload, "distinct_blockers"),
+                stall_verdict=(
+                    str(payload["stall_verdict"])
+                    if payload.get("stall_verdict") is not None
+                    else None
+                ),
+                condition=None,
+                schema_version=_int(payload, "schema_version"),
+            )
+        # -- Attractor pipeline lifecycle ----------------------------------
+        case "pipeline:start":
+            return PipelineStarted(
+                **env,
+                graph_name=_str(payload, "graph_name"),
+                node_count=_int(payload, "node_count"),
+                edge_count=_int(payload, "edge_count"),
+                goal=_str(payload, "goal"),
+                dot_source=_str(payload, "dot_source"),
+            )
+        case "pipeline:node_start":
+            return PipelineProgress(
+                **env,
+                phase="node_started",
+                node_id=_str(payload, "node_id"),
+                handler_type=_str(payload, "handler_type"),
+                attempt=_int(payload, "attempt"),
+                execution_index=_int(payload, "execution_index"),
+                branch_id=_str(payload, "branch_id"),
+                via_parallel=payload.get("via_parallel") is True,
+            )
+        case "pipeline:node_complete":
+            return PipelineProgress(
+                **env,
+                phase="node_completed",
+                node_id=_str(payload, "node_id"),
+                status=_str(payload, "status"),
+                execution_index=_int(payload, "execution_index"),
+                duration_ms=_float(payload, "duration_ms"),
+                notes=_str(payload, "notes"),
+                failure_reason=_str(payload, "failure_reason"),
+                # Attractor uses ``session_id`` for the backend child session
+                # on this event. Keep a named copy so clients do not have to
+                # infer that graph-specific meaning from the common envelope.
+                node_session_id=_str(payload, "session_id"),
+                branch_id=_str(payload, "branch_id"),
+                via_parallel=payload.get("via_parallel") is True,
+            )
+        case "pipeline:edge_selected":
+            return PipelineProgress(
+                **env,
+                phase="edge_selected",
+                from_node=_str(payload, "from_node"),
+                to_node=_str(payload, "to_node"),
+                edge_label=_str(payload, "edge_label"),
+                branch_id=_str(payload, "branch_id"),
+            )
+        case "pipeline:checkpoint":
+            return PipelineCheckpoint(
+                **env,
+                node_id=_str(payload, "node_id"),
+                checkpoint_path=_str(payload, "checkpoint_path"),
+                branch_id=_str(payload, "branch_id"),
+            )
+        case "pipeline:complete":
+            return PipelineComplete(
+                **env,
+                status=_str(payload, "status"),
+                total_nodes_executed=_int(payload, "total_nodes_executed"),
+                duration_ms=_float(payload, "duration_ms"),
+                branch_id=_str(payload, "branch_id"),
+            )
+        # -- Turn lifecycle --------------------------------------------------
+        case "prompt:submit":
+            return PromptSubmit(
+                **env,
+                prompt=_str(payload, "prompt", "text"),
+                mode=_str(payload, "mode"),
+                workspace_checkpoint_id=_str(payload, "workspace_checkpoint_id"),
+            )
+        case "prompt:complete":
+            return PromptComplete(**env, response=_str(payload, "response"))
+        case "execution:start":
+            return ExecutionStart(**env)
+        case "execution:end":
+            return ExecutionEnd(**env)
+        # -- Provider ----------------------------------------------------------
+        case "provider:response":
+            usage = _usage_source(payload)
+            return ProviderResponseUsage(
+                **env,
+                input_tokens=_int(usage, "input_tokens", "prompt_tokens"),
+                output_tokens=_int(usage, "output_tokens", "completion_tokens"),
+                cache_read=_int(
+                    usage, "cache_read", "cache_read_input_tokens", "cache_read_tokens"
+                ),
+                cache_write=_int(
+                    usage,
+                    "cache_write",
+                    "cache_creation_input_tokens",
+                    "cache_write_tokens",
+                ),
+                model=_str(payload, "model"),
+            )
+        case "provider:error" | "provider:retry" | "provider:throttle":
+            error_type, message = _error_fields(payload)
+            # Scrub the verbatim text at the boundary; never truncate.
+            message = scrub_text(message or _str(payload, "message", "reason"))
+            status = _str(payload, "status_code", "status", "http_status")
+            return ProviderNotice(
+                **env,
+                notice=_NOTICE_KINDS[event_name],  # type: ignore[arg-type]
+                message=message,
+                category=_classify_provider_error(error_type, status, message),
+                provider=_str(payload, "provider", "provider_id", "provider_name"),
+            )
+        case "context:compaction":
+            return ContextCompacted(
+                **env,
+                before_tokens=_int(payload, "before_tokens"),
+                after_tokens=_int(payload, "after_tokens"),
+                before_messages=_int(payload, "before_messages"),
+                after_messages=_int(payload, "after_messages"),
+                strategy_level=_int(payload, "strategy_level"),
+                budget=_int(payload, "budget"),
+                target_tokens=_int(payload, "target_tokens"),
+                messages_removed=_int(payload, "messages_removed"),
+                messages_truncated=_int(payload, "messages_truncated"),
+                user_messages_stubbed=_int(payload, "user_messages_stubbed"),
+            )
+        # -- Session lifecycle -------------------------------------------------
+        case "session:start":
+            return SessionStart(**env)
+        case "session:end":
+            return SessionEnd(**env)
+        case "session:fork":
+            return SessionFork(
+                **env,
+                source_session_id=_str(payload, "source_session_id", "parent_session_id"),
+            )
+        case "session:resume":
+            return SessionResume(**env)
+        # -- Approvals / cancel --------------------------------------------------
+        case "approval:required":
+            raw_options = payload.get("options")
+            options = (
+                tuple(str(option) for option in raw_options)
+                if isinstance(raw_options, (list, tuple))
+                else ()
+            )
+            return ApprovalRequired(
+                **env, prompt=_str(payload, "prompt", "message"), options=options
+            )
+        case "approval:granted":
+            return ApprovalGranted(
+                **env,
+                prompt=_str(payload, "prompt", "message"),
+                choice=_str(payload, "choice", "option", "response"),
+            )
+        case "approval:denied":
+            return ApprovalDenied(
+                **env,
+                prompt=_str(payload, "prompt", "message"),
+                reason=_str(payload, "reason"),
+                command=_str(payload, "command"),
+                continuation=_str(payload, "continuation"),
+            )
+        case "recipe:approval":
+            # tool-recipes approval gate (amplifier-bundle-recipes
+            # executor._show_progress → hooks.emit("recipe:approval")).
+            # Payload: {name, description, current_step, total_steps,
+            # steps, status: "waiting_approval", prompt, stage_name} — it
+            # carries NO recipe session id; answer routing resolves that
+            # through the tool's own ``approvals`` operation
+            # (kernel/recipes.py). Options are not in the payload either:
+            # the broker presents the fail-closed verbatim triple, so the
+            # durable record states the same.
+            return ApprovalRequired(
+                **env,
+                prompt=recipe_approval_prompt(payload),
+                options=("Allow once", "Allow always", "Deny"),
+            )
+        case "cancel:requested":
+            return CancelRequested(**env)
+        case "cancel:completed":
+            return CancelCompleted(**env)
+        # -- Subagents (task:agent_* canonical; task:* + delegate:* aliases) ------
+        case "task:agent_spawned" | "task:spawned" | "delegate:agent_spawned":
+            return AgentSpawned(
+                **env,
+                agent=_str(payload, "agent", "agent_name", "name"),
+                sub_session_id=_str(payload, "sub_session_id", "child_session_id"),
+                parent_session_id=_str(payload, "parent_session_id"),
+            )
+        case "task:agent_completed" | "task:completed" | "delegate:agent_completed":
+            success = payload.get("success")
+            return AgentCompleted(
+                **env,
+                agent=_str(payload, "agent", "agent_name", "name"),
+                sub_session_id=_str(payload, "sub_session_id", "child_session_id"),
+                parent_session_id=_str(payload, "parent_session_id"),
+                success=True if success is None else bool(success),
+                result=_str(payload, "result", "summary"),
+            )
+        case "delegate:agent_resumed":
+            return AgentResumed(
+                **env,
+                agent=_str(payload, "agent", "agent_name", "name"),
+                parent_session_id=_str(payload, "parent_session_id"),
+            )
+        case "delegate:agent_cancelled":
+            return AgentCompleted(
+                **env,
+                agent=_str(payload, "agent", "agent_name", "name"),
+                sub_session_id=_str(payload, "sub_session_id", "child_session_id"),
+                parent_session_id=_str(payload, "parent_session_id"),
+                success=False,
+                result="cancelled",
+            )
+        case "delegate:error":
+            return AgentCompleted(
+                **env,
+                agent=_str(payload, "agent", "agent_name", "name"),
+                sub_session_id=_str(payload, "sub_session_id", "child_session_id"),
+                parent_session_id=_str(payload, "parent_session_id"),
+                success=False,
+                result="error",
+            )
+        case "user:notification":
+            raw_choices = payload.get("choices")
+            raw_descriptions = payload.get("descriptions")
+            return Notification(
+                **env,
+                message=_str(payload, "message", "text"),
+                level=_str(payload, "level", default="info"),
+                source=_str(payload, "source"),
+                decision_id=_str(payload, "decision_id"),
+                question=_str(payload, "question"),
+                reason=_str(payload, "reason"),
+                choices=tuple(str(c) for c in raw_choices)
+                if isinstance(raw_choices, (list, tuple))
+                else (),
+                descriptions=tuple(str(d) for d in raw_descriptions)
+                if isinstance(raw_descriptions, (list, tuple))
+                else (),
+                multiple=bool(payload.get("multiple", False)),
+                custom=bool(payload.get("custom", False)),
+                highlight=_str(payload, "highlight"),
+                action=_str(payload, "action"),
+            )
+        case _:
+            return None
+
+
+__all__ = [
+    "AgentCompleted",
+    "AgentResumed",
+    "AgentSpawned",
+    "ApprovalDenied",
+    "ApprovalGranted",
+    "ApprovalRequired",
+    "CancelCompleted",
+    "CancelRequested",
+    "ContentBlockEnd",
+    "ContentBlockStart",
+    "ContextCompacted",
+    "ContextInjected",
+    "ExecutionEnd",
+    "ExecutionStart",
+    "GoalProgress",
+    "Notification",
+    "OrchestratorComplete",
+    "ParsedEvent",
+    "PipelineCheckpoint",
+    "PipelineComplete",
+    "PipelineProgress",
+    "PipelineProgressPhase",
+    "PipelineStarted",
+    "PromptComplete",
+    "PromptSubmit",
+    "ProviderErrorCategory",
+    "ProviderNotice",
+    "ProviderResponseUsage",
+    "RewindMarker",
+    "SessionEnd",
+    "SessionFork",
+    "SessionResume",
+    "SessionStart",
+    "StreamAborted",
+    "StreamBlockDelta",
+    "StreamBlockEnd",
+    "StreamBlockStart",
+    "ToolError",
+    "ToolPost",
+    "ToolPre",
+    "UIEvent",
+    "drop_rewound_events",
+    "normalize",
+    "parse_event",
+    "recipe_approval_prompt",
+]

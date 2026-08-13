@@ -1,0 +1,75 @@
+[project]
+name = "amplifier-runtime"
+version = "0.1.0"
+description = "Neutral session runtime for Amplifier clients"
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Microsoft MADE:Explorations Team" }]
+keywords = ["ai", "agents", "amplifier", "runtime", "sessions"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "amplifier-core>=1.6.0",
+    "amplifier-foundation @ git+https://github.com/microsoft/amplifier-foundation.git@dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134",
+    "click>=8.1.0",
+    "filelock>=3.29.6",
+    "httpx[socks]>=0.28.1",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+amplifier-runtime = "amplifier_runtime.cli:main"
+
+[project.urls]
+Repository = "https://github.com/michaeljabbour/amplifier-runtime"
+Issues = "https://github.com/michaeljabbour/amplifier-runtime/issues"
+
+[build-system]
+requires = ["hatchling==1.31.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amplifier_runtime"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.12.0,<0.16",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+asyncio_mode = "strict"
+
+[tool.pyright]
+include = ["src", "tests"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+extend-select = ["BLE"]
