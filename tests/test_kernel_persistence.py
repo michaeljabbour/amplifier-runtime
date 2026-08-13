@@ -155,7 +155,7 @@ def test_invalid_session_ids_rejected(store: SessionStore, bad_id: str) -> None:
 
 def test_unserializable_metadata_degrades_to_str(store: SessionStore) -> None:
     store.save("s1", [], {"path": Path("/tmp/x")})
-    assert store.get_metadata("s1")["path"] == "/tmp/x"
+    assert store.get_metadata("s1")["path"] == str(Path("/tmp/x"))
 
 
 # --------------------------------------------------------------------------
@@ -370,7 +370,8 @@ def test_rewind_intent_is_private_redacted_and_excludes_runtime_roles(
     raw_text = intent.read_text(encoding="utf-8")
     payload = json.loads(raw_text)
 
-    assert stat.S_IMODE(intent.stat().st_mode) == 0o600
+    if os.name == "posix":
+        assert stat.S_IMODE(intent.stat().st_mode) == 0o600
     assert [message["role"] for message in payload["messages"]] == ["user", "assistant"]
     assert _AWS_KEY not in raw_text
     assert _AWS_SECRET not in raw_text

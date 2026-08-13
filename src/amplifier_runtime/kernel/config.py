@@ -1388,6 +1388,15 @@ def is_bundle_uri(name: str) -> bool:
     return name.startswith(_URI_PREFIXES)
 
 
+def _local_file_uri(path: Path) -> str:
+    """Return the cross-platform file URI form Foundation currently accepts."""
+    # Foundation strips the literal ``file://`` prefix before passing the
+    # remainder to pathlib. ``Path.as_uri()`` adds a third slash before a
+    # Windows drive (file:///C:/...), leaving /C:/... after that strip. Keep
+    # the drive directly after the prefix instead (file://C:/...).
+    return f"file://{path.resolve().as_posix()}"
+
+
 def discover_bundle(name: str, search_paths: tuple[Path, ...] | list[Path]) -> str | None:
     """Resolve a bundle *name* to a loadable URI.
 
@@ -1399,21 +1408,21 @@ def discover_bundle(name: str, search_paths: tuple[Path, ...] | list[Path]) -> s
     """
     if is_bundle_uri(name):
         return name
-    # A plain filesystem path (relative or absolute) that resolves to a
-    # bundle file/dir is a valid source — foundation's load_bundle takes
-    # local paths directly (URI_FORMATS.md), so don't force a URI prefix.
+    # Normalize local files to absolute file URIs. A Windows drive path such
+    # as ``C:\\project\\bundle.md`` otherwise looks like an unsupported URI
+    # scheme to Foundation's loader.
     if any(sep in name for sep in ("/", "\\")) or name.endswith((".md", ".yaml")):
         path = Path(name).expanduser()
         if path.is_file():
-            return str(path)
+            return _local_file_uri(path)
         for candidate in ("bundle.md", "bundle.yaml"):
             if (path / candidate).is_file():
-                return str(path / candidate)
+                return _local_file_uri(path / candidate)
     for base in search_paths:
         for pattern in _BUNDLE_FILE_CANDIDATES:
             candidate = base / pattern.format(name=name)
             if candidate.is_file():
-                return str(candidate)
+                return _local_file_uri(candidate)
     return None
 
 

@@ -38,7 +38,7 @@ import tempfile
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ..model.redaction import scrub_value
 from .config import get_project_slug
@@ -94,19 +94,47 @@ def _validate_session_id(session_id: str) -> str:
     return session_id
 
 
+def _set_private_descriptor_mode(descriptor: int) -> None:
+    """Apply POSIX private-file permissions when the platform exposes them."""
+    fchmod = getattr(os, "fchmod", None)
+    if callable(fchmod):
+        fchmod(descriptor, 0o600)
+
+
+def _set_private_path_mode(path: Path) -> None:
+    """Apply the strongest private-file mode supported by this platform."""
+    try:
+        os.chmod(path, 0o600, follow_symlinks=False)
+    except (NotImplementedError, TypeError):
+        os.chmod(path, 0o600)
+
+
+def _read_byte_at(descriptor: int, offset: int) -> bytes:
+    """Read one byte without changing the append position, including on Windows."""
+    pread = getattr(os, "pread", None)
+    if callable(pread):
+        return cast(bytes, pread(descriptor, 1, offset))
+    original = os.lseek(descriptor, 0, os.SEEK_CUR)
+    try:
+        os.lseek(descriptor, offset, os.SEEK_SET)
+        return os.read(descriptor, 1)
+    finally:
+        os.lseek(descriptor, original, os.SEEK_SET)
+
+
 def _write_private_bytes(path: Path, payload: bytes) -> None:
     """Atomically replace one private file and fsync its directory entry."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temp = Path(temp_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        _set_private_descriptor_mode(descriptor)
         with os.fdopen(descriptor, "wb", closefd=True) as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp, path)
-        os.chmod(path, 0o600, follow_symlinks=False)
+        _set_private_path_mode(path)
         _fsync_directory(path.parent)
     finally:
         try:
@@ -569,13 +597,13 @@ class SessionStore:
         path = session_dir / EVENTS_FILENAME
         flags = os.O_APPEND | os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags, 0o600)
-        os.fchmod(descriptor, 0o600)
+        _set_private_descriptor_mode(descriptor)
         payload = (json.dumps(record, ensure_ascii=False, default=_json_default) + "\n").encode(
             "utf-8"
         )
         try:
             size = os.fstat(descriptor).st_size
-            if size and os.pread(descriptor, 1, size - 1) != b"\n":
+            if size and _read_byte_at(descriptor, size - 1) != b"\n":
                 # Isolate the transaction marker from an interrupted final
                 # JSONL record. Readers skip the malformed prior line while
                 # the newly appended marker remains independently parseable.

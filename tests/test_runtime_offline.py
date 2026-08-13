@@ -331,20 +331,20 @@ bundle:
 session:
   orchestrator:
     module: loop-fake
-    source: file://{modules}/amplifier-module-loop-fake
+    source: {modules}/amplifier-module-loop-fake
   context:
     module: context-fake
-    source: file://{modules}/amplifier-module-context-fake
+    source: {modules}/amplifier-module-context-fake
 
 providers:
   - module: provider-fake
-    source: file://{modules}/amplifier-module-provider-fake
+    source: {modules}/amplifier-module-provider-fake
     config:
       default_model: fake-model
 
 tools:
   - module: tool-fake
-    source: file://{modules}/amplifier-module-tool-fake
+    source: {modules}/amplifier-module-tool-fake
 ---
 
 Offline test bundle instruction: you are a fake session.
@@ -369,7 +369,10 @@ def offline_workspace(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Pat
     project = root / "proj"
     bundles = project / ".amplifier" / "bundles"
     bundles.mkdir(parents=True)
-    (bundles / "offline.md").write_text(_BUNDLE_TEMPLATE.format(modules=modules), encoding="utf-8")
+    (bundles / "offline.md").write_text(
+        _BUNDLE_TEMPLATE.format(modules=f"file://{modules.resolve().as_posix()}"),
+        encoding="utf-8",
+    )
 
     home = root / "home"
     home.mkdir()
