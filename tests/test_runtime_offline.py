@@ -370,7 +370,8 @@ def offline_workspace(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Pat
     bundles = project / ".amplifier" / "bundles"
     bundles.mkdir(parents=True)
     (bundles / "offline.md").write_text(
-        _BUNDLE_TEMPLATE.format(modules=modules.resolve().as_uri()), encoding="utf-8"
+        _BUNDLE_TEMPLATE.format(modules=f"file://{modules.resolve().as_posix()}"),
+        encoding="utf-8",
     )
 
     home = root / "home"
