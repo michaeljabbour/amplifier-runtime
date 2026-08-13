@@ -1298,7 +1298,7 @@ class WorkspaceCheckpointStore:
         try:
             self._ownership_proxy = self._ownership_lock.acquire(timeout=0)
             try:
-                os.chmod(self._ownership_path, 0o600, follow_symlinks=False)
+                _set_private_path_mode(self._ownership_path)
             except OSError:
                 pass
         except Timeout as error:
@@ -1852,6 +1852,21 @@ def _create_bound_temp(parent_fd: int) -> tuple[int, str]:
     raise FileExistsError("could not allocate a checkpoint staging file")
 
 
+def _set_private_descriptor_mode(descriptor: int) -> None:
+    """Apply POSIX private-file permissions when the platform exposes them."""
+    fchmod = getattr(os, "fchmod", None)
+    if callable(fchmod):
+        fchmod(descriptor, 0o600)
+
+
+def _set_private_path_mode(path: Path) -> None:
+    """Apply the strongest private-file mode supported by this platform."""
+    try:
+        os.chmod(path, 0o600, follow_symlinks=False)
+    except (NotImplementedError, TypeError):
+        os.chmod(path, 0o600)
+
+
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
@@ -1888,13 +1903,13 @@ def _atomic_private_write(path: Path, data: bytes) -> None:
     descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temp = Path(temp_name)
     try:
-        os.fchmod(descriptor, 0o600)
+        _set_private_descriptor_mode(descriptor)
         with os.fdopen(descriptor, "wb", closefd=True) as handle:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp, path)
-        os.chmod(path, 0o600, follow_symlinks=False)
+        _set_private_path_mode(path)
         _fsync_dir_strict(path.parent)
     finally:
         try:
