@@ -23,7 +23,12 @@ jobs:
       - run: uv sync --frozen
       - run: uv run ruff check .
       - run: uv run ruff format --check .
-      - run: uv run pyright src tests
+      # Pyright selects platform-specific stdlib stubs from the host OS. The
+      # runtime deliberately contains guarded POSIX session-attach and secure
+      # descriptor paths, so type-check once against the supported POSIX API;
+      # the Windows lane still executes the full test and build gates below.
+      - if: matrix.os != 'windows-latest'
+        run: uv run pyright src tests
       - run: uv run pytest -q
       - run: uv build
 
