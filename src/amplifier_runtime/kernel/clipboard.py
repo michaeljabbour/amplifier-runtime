@@ -347,15 +347,21 @@ def _unescape_backslashes(value: str) -> str:
 
 
 def _read_local_file_path(value: str) -> Path | None:
-    parsed = urlsplit(value)
-    if parsed.scheme:
-        if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
-            return None
-        candidate = unquote(parsed.path)
+    expanded = Path(value).expanduser()
+    if expanded.is_absolute():
+        # Let the host OS recognize its own absolute-path syntax before URL
+        # parsing: on Windows, ``C:/...`` otherwise looks like scheme ``c``.
+        candidate = str(expanded)
     else:
-        if not value.startswith(("/", "~/", "./", "../")):
+        parsed = urlsplit(value)
+        if parsed.scheme:
+            if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+                return None
+            candidate = unquote(parsed.path)
+        elif value.startswith(("./", "../")):
+            candidate = value
+        else:
             return None
-        candidate = value
     try:
         path = Path(candidate).expanduser().resolve(strict=True)
     except OSError:
