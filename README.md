@@ -8,10 +8,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-2f855a.svg)](LICENSE)
 
 Amplifier Runtime is the UI-neutral session engine shared by
-[Amplifier](https://github.com/microsoft/amplifier) clients. It lets Studio,
-SAM, terminal apps, automation, and future surfaces share the same agents,
-approvals, plans, history, and recovery behavior instead of rebuilding those
-capabilities in every app.
+[Amplifier](https://github.com/microsoft/amplifier) clients. Studio and the TUI
+use it today. It gives SAM, the CLI, automation, and future surfaces one
+contract for adopting the same agents, approvals, plans, history, and recovery
+behavior instead of rebuilding those capabilities in every app.
 
 It is a Python package and executable over Amplifier's hybrid Python/Rust Core.
 It is **not** a UI and **not** an Amplifier bundle.
@@ -28,10 +28,14 @@ way no matter where it is surfaced.
 
 ```mermaid
 flowchart TB
-    subgraph surfaces["Amplifier surfaces"]
+    subgraph active["Using Runtime today"]
         studio["Studio"]
+        terminal["TUI"]
+    end
+
+    subgraph adopters["Additional Amplifier surfaces"]
         sam["SAM"]
-        terminal["TUI / CLI"]
+        cli["CLI"]
         automation["Automation and remote bridges"]
     end
 
@@ -48,9 +52,10 @@ flowchart TB
     end
 
     studio -->|"JSONL"| protocol
-    sam -->|"JSONL / bridge"| protocol
     terminal -->|"Python API"| host
-    automation -->|"JSONL"| protocol
+    sam -.->|"JSONL / bridge"| protocol
+    cli -.->|"Python API or JSONL"| host
+    automation -.->|"JSONL"| protocol
 
     host --> foundation["Amplifier Foundation"]
     bundles["Bundles<br/>declarative composition"] --> foundation
@@ -58,10 +63,11 @@ flowchart TB
     core --> providers["Models · tools · child agents"]
 ```
 
-A client can host Runtime in-process, launch it as a local subprocess, or launch
-it on another machine and carry the JSONL stream through its own authenticated
-bridge. The session contract stays the same; the client still owns how that
-session looks and feels.
+Solid lines show the integrations in use today; dashed lines show the shared
+contract available to additional clients. A client can host Runtime in-process,
+launch it as a local subprocess, or launch it on another machine and carry the
+JSONL stream through its own authenticated bridge. The session contract stays
+the same; the client still owns how that session looks and feels.
 
 ## What belongs where
 
@@ -174,9 +180,9 @@ amplifier-runtime config paths --json
 
 | Integration | Best for | Contract |
 | --- | --- | --- |
-| **In-process Python API** | TUI and CLI clients | Direct access to the same runtime implementation |
+| **In-process Python API** | TUI; a migration path for Python clients | Direct access to the same runtime implementation |
 | **JSONL subprocess** | Desktop apps such as Studio | Versioned operations in, normalized events out |
-| **Remote bridge** | SAM, automation, and non-local compute | The same JSONL stream carried by a client-owned secure transport |
+| **Remote bridge** | SAM, automation, and non-local compute integrations | The same JSONL stream carried by a client-owned secure transport |
 | **Live attach** | A second local surface joining an active session | Replay plus observer/writer lease semantics |
 
 Live attach uses a local Unix-domain endpoint on macOS and Linux. Windows
@@ -215,8 +221,9 @@ iterating, but they are not enough to claim client compatibility.
 ## Project status
 
 Amplifier Runtime is an active `0.1.x` component. It is already the shared
-session implementation for Amplifier clients, while its public protocol and
-remote-hosting surfaces continue to mature.
+session implementation behind Studio and the TUI. CLI, SAM, and other client
+integrations can adopt the same in-process or JSONL contract as their migrations
+land, while the public protocol and remote-hosting surfaces continue to mature.
 
 - [Releases](https://github.com/michaeljabbour/amplifier-runtime/releases)
 - [Issues](https://github.com/michaeljabbour/amplifier-runtime/issues)
