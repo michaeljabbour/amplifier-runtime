@@ -17,8 +17,23 @@ def test_serve_help_exposes_session_host_controls() -> None:
     result = CliRunner().invoke(main, ["serve", "--help"])
 
     assert result.exit_code == 0
-    for option in ("--resume", "--attach", "--actor", "--actor-kind", "--attachable"):
+    for option in (
+        "--resume",
+        "--attach",
+        "--project-dir",
+        "--actor",
+        "--actor-kind",
+        "--attachable",
+        "--detached",
+    ):
         assert option in result.output
+
+
+def test_detached_serve_requires_attachable() -> None:
+    result = CliRunner().invoke(main, ["serve", "--detached"])
+
+    assert result.exit_code == 2
+    assert "--detached requires --attachable" in result.output
 
 
 def test_model_and_provider_overrides_are_atomic() -> None:
@@ -116,6 +131,26 @@ def test_bundle_add_registers_validated_bundle(monkeypatch, tmp_path: Path) -> N
     assert "studio-demo" in (home / "settings.yaml").read_text(encoding="utf-8")
 
 
+def test_bundle_warm_exposes_existing_prepare_mechanism(monkeypatch, tmp_path: Path) -> None:
+    from amplifier_runtime.kernel.bundle_admin import WarmResult
+
+    calls: list[tuple[str, Path | None]] = []
+
+    async def warmed(uri: str, *, project_dir=None, **_kwargs) -> WarmResult:
+        calls.append((uri, project_dir))
+        return WarmResult(True, uri, "modules ready (1 providers · 2 tools · 3 hooks · 4 agents)")
+
+    monkeypatch.setattr("amplifier_runtime.kernel.bundle_admin.warm_bundle", warmed)
+    result = CliRunner().invoke(
+        main,
+        ["bundle", "warm", "git+https://example.test/demo", "--project-dir", str(tmp_path)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [("git+https://example.test/demo", tmp_path.resolve())]
+    assert "modules ready" in result.output
+
+
 def test_provider_add_reads_secret_from_stdin_and_never_echoes_it(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -143,11 +178,22 @@ def test_settings_and_config_paths_match_studio_contract(monkeypatch, tmp_path: 
     monkeypatch.chdir(tmp_path)
 
     section = CliRunner().invoke(main, ["settings", "get", "behavior"])
+    snapshot = CliRunner().invoke(main, ["settings", "get", "--json"])
     paths = CliRunner().invoke(main, ["config", "paths", "--json"])
 
     assert section.exit_code == 0, section.output
     assert "context.max_tokens =" in section.output
     assert "tui.preflight.verify_live =" in section.output
+    assert snapshot.exit_code == 0, snapshot.output
+    settings = json.loads(snapshot.output)
+    assert settings["schemaVersion"] == 1
+    assert settings["projectDir"] == str(tmp_path)
+    assert len(settings["values"]) == 29
+    provider = next(
+        value for value in settings["values"] if value["path"] == "providers.openai.api_key"
+    )
+    assert provider["display"] in {"configured", "not set"}
+    assert provider["remoteWritable"] is False
     assert paths.exit_code == 0, paths.output
     payload = json.loads(paths.output)
     assert payload["schema"] == "amplifier-runtime/config-paths/v1"

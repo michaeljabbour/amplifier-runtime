@@ -297,22 +297,10 @@ def pasted_image_attachments(text: str) -> tuple[ImageAttachment, ...]:
     Cmd+V of an image file and drag-and-drop both arrive as a bracketed
     text paste of the file path (the terminal can't deliver image bytes to
     a TTY), so the composer routes pasted text through here first."""
-    value = text.strip()
-    if not value:
-        return ()
-    direct = _read_image_path(value.strip("'\""))
-    if direct is not None:
-        return (direct,)
-    try:
-        tokens = shlex.split(value)
-    except ValueError:
-        return ()
-    if not 1 <= len(tokens) <= MAX_CLIPBOARD_ATTACHMENTS:
-        return ()
     attachments: list[ImageAttachment] = []
     total_bytes = 0
-    for token in tokens:
-        attachment = _read_image_path(token)
+    for path in pasted_local_file_paths(text):
+        attachment = read_image_file(path)
         if attachment is None:
             return ()
         total_bytes += len(attachment.data)
@@ -322,17 +310,63 @@ def pasted_image_attachments(text: str) -> tuple[ImageAttachment, ...]:
     return tuple(attachments)
 
 
-def _read_image_path(value: str) -> ImageAttachment | None:
-    parsed = urlsplit(value)
-    if parsed.scheme:
-        if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
-            return None
-        candidate = unquote(parsed.path)
+def pasted_local_file_paths(text: str) -> tuple[Path, ...]:
+    """Interpret pasted/dragged terminal text as existing local files."""
+    # Strip whitespace plus any trailing newline/CR some terminals append to a
+    # drop, and any wrapping blanks around a single path.
+    value = text.strip(" \t\r\n\v\f")
+    if not value:
+        return ()
+    direct = _read_local_file_path(value.strip("'\""))
+    if direct is not None:
+        return (direct,)
+    try:
+        tokens = shlex.split(value)
+    except ValueError:
+        # Unbalanced quote (e.g. a path containing an unescaped apostrophe)
+        # makes shlex.split raise.  Manually unescape backslash-escaped
+        # characters on the whole payload and retry the single candidate
+        # before giving up.
+        candidate = _unescape_backslashes(value)
+        path = _read_local_file_path(candidate)
+        return (path,) if path is not None else ()
+    if not 1 <= len(tokens) <= MAX_CLIPBOARD_ATTACHMENTS:
+        return ()
+    paths: list[Path] = []
+    for token in tokens:
+        path = _read_local_file_path(token)
+        if path is None:
+            return ()
+        paths.append(path)
+    return tuple(paths)
+
+
+def _unescape_backslashes(value: str) -> str:
+    """Decode ``\\<char>`` backslash escapes into a literal ``<char>``."""
+    return re.sub(r"\\(.)", r"\1", value)
+
+
+def _read_local_file_path(value: str) -> Path | None:
+    expanded = Path(value).expanduser()
+    if expanded.is_absolute():
+        # Let the host OS recognize its own absolute-path syntax before URL
+        # parsing: on Windows, ``C:/...`` otherwise looks like scheme ``c``.
+        candidate = str(expanded)
     else:
-        if not value.startswith(("/", "~/", "./", "../")):
+        parsed = urlsplit(value)
+        if parsed.scheme:
+            if parsed.scheme != "file" or parsed.netloc not in {"", "localhost"}:
+                return None
+            candidate = unquote(parsed.path)
+        elif value.startswith(("./", "../")):
+            candidate = value
+        else:
             return None
-        candidate = value
-    return read_image_file(Path(candidate).expanduser())
+    try:
+        path = Path(candidate).expanduser().resolve(strict=True)
+    except OSError:
+        return None
+    return path if path.is_file() else None
 
 
 def _detect_image_media_type(data: bytes) -> ImageMediaType | None:
@@ -357,6 +391,7 @@ __all__ = [
     "MAX_CLIPBOARD_TOTAL_BYTES",
     "build_image_message",
     "pasted_image_attachments",
+    "pasted_local_file_paths",
     "read_clipboard_image",
     "read_image_file",
 ]

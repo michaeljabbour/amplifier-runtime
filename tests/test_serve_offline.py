@@ -371,6 +371,30 @@ class _FakeImageRuntime:
         pass
 
 
+async def test_detached_owner_survives_launcher_stdin_eof() -> None:
+    runtime = _FakeImageRuntime()
+    stdin, out = _PipeStdin(), _Capture()
+    server = asyncio.create_task(
+        serve_loop(
+            runtime,  # type: ignore[arg-type]
+            source=cast("IO[str]", stdin),
+            out=cast("IO[str]", out),
+            detached=True,
+        )
+    )
+    for _ in range(100):
+        if "session.started" in out.types():
+            break
+        await asyncio.sleep(0.01)
+    assert "session.started" in out.types()
+    stdin.close()
+    await asyncio.sleep(0.05)
+    assert not server.done()
+    server.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await server
+
+
 _PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 

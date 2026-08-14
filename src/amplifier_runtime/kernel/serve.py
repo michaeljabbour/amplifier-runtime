@@ -148,7 +148,11 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+from dataclasses import asdict
+from hashlib import sha256
 import json
+import mimetypes
+from pathlib import Path
 import sys
 import threading
 from collections.abc import Callable
@@ -170,6 +174,7 @@ from .jsonl import JsonlRecords
 from .prompt_history import PromptHistoryStore
 from .runtime import RealRuntime
 from .session_attach import (
+    PROTOCOL_VERSION,
     AttachServer,
     FanoutWriter,
     live_endpoint,
@@ -181,6 +186,10 @@ from .session_authz import (
     READ,
     WRITE,
     AuthorizationPolicy,
+    Principal,
+    StaticPolicy,
+    normalize_kind,
+    normalize_permissions,
     policy_for,
 )
 from .session_control import (
@@ -421,6 +430,10 @@ state), not in :func:`_handle_control_op`, which is control-plane-only."""
 
 OP_PERMISSIONS: dict[str, str] = {
     # -- reads: observe, never change anything -------------------------------
+    "runtime.capabilities": READ,
+    "artifact.read": READ,
+    "settings.schema": READ,
+    "settings.get": READ,
     "session.handle": READ,
     "session.status": READ,
     "lease.status": READ,
@@ -445,6 +458,7 @@ OP_PERMISSIONS: dict[str, str] = {
     "tag.remove": WRITE,
     "effort.set": WRITE,
     "effort.cycle": WRITE,
+    "settings.apply": WRITE,
     # -- ownership: who holds the pen ----------------------------------------
     "lease.acquire": CONTROL,
     "lease.heartbeat": CONTROL,
@@ -508,7 +522,12 @@ def _authz_policy(runtime: Any) -> AuthorizationPolicy:
         return policy_for(None)
 
 
-def _open_control(runtime: Any, default_actor: Actor) -> SessionControl:
+def _open_control(
+    runtime: Any,
+    default_actor: Actor,
+    *,
+    policy: AuthorizationPolicy | None = None,
+) -> SessionControl:
     """Materialize the control plane over THIS session's store directory."""
     store = _serve_store(runtime)
     session_id = str(getattr(runtime, "session_id", ""))
@@ -516,8 +535,227 @@ def _open_control(runtime: Any, default_actor: Actor) -> SessionControl:
         store.session_dir(session_id),
         session_id,
         default_actor=default_actor,
-        policy=_authz_policy(runtime),
+        policy=policy or _authz_policy(runtime),
     )
+
+
+_ARTIFACT_CHUNK_BYTES = 8 * 1024 * 1024
+
+
+def _runtime_capabilities_record() -> dict[str, Any]:
+    """The negotiated runtime surface, derived from the audited op registry."""
+    return {
+        "schema_version": 1,
+        "type": "runtime.capabilities",
+        "protocol": {
+            "name": "amplifier-runtime-jsonl",
+            "version": PROTOCOL_VERSION,
+            "minimum": PROTOCOL_VERSION,
+            "maximum": PROTOCOL_VERSION,
+        },
+        "operations": {
+            name: {"permission": permission} for name, permission in sorted(OP_PERMISSIONS.items())
+        },
+        "features": [
+            "artifact.read.chunked",
+            "history.replay.cursor",
+            "session.attach.unix",
+            "session.owner.detached",
+            "settings.read.redacted",
+            "settings.write.next-session",
+        ],
+    }
+
+
+def _settings_context(runtime: Any) -> tuple[Any, Path]:
+    from . import bundle_admin, setup
+
+    project_dir = Path(getattr(runtime, "project_dir", Path.cwd())).resolve()
+    return bundle_admin.settings_paths(project_dir, None), setup.keys_file()
+
+
+def _settings_schema_record(runtime: Any) -> dict[str, Any]:
+    from ..model.settings_schema import FIELDS, SECTIONS
+
+    return {
+        "schema_version": 1,
+        "type": "settings.schema",
+        "project_dir": str(Path(getattr(runtime, "project_dir", Path.cwd())).resolve()),
+        "sections": [asdict(section) for section in SECTIONS],
+        "fields": [
+            {
+                "path": field.path,
+                "section": field.section,
+                "kind": field.kind,
+                "help": field.help,
+                "default": None if field.secret else field.default,
+                "secret": field.secret,
+                "choices": list(field.choices),
+                "minimum_exclusive": field.minimum_exclusive,
+                "maximum_inclusive": field.maximum_inclusive,
+                "applies": field.applies,
+                "remote_writable": not field.secret,
+            }
+            for field in FIELDS
+        ],
+    }
+
+
+def _settings_values(runtime: Any, requested: Any = None) -> list[dict[str, Any]]:
+    from ..model.settings_schema import FIELDS, field_by_path
+    from . import settings_service
+
+    paths, keys = _settings_context(runtime)
+    if requested is None:
+        fields = FIELDS
+    elif isinstance(requested, list):
+        fields = tuple(
+            field
+            for item in requested
+            if isinstance(item, str) and (field := field_by_path(item)) is not None
+        )
+    else:
+        field = field_by_path(str(requested))
+        fields = (field,) if field is not None else ()
+    return [
+        {
+            "path": resolved.field.path,
+            "display": resolved.display,
+            "source": resolved.source,
+            "source_file": str(resolved.source_file) if resolved.source_file else None,
+            "applies": resolved.field.applies,
+        }
+        for field in fields
+        for resolved in (settings_service.resolve_field(paths, keys, field),)
+    ]
+
+
+def _settings_get_record(runtime: Any, op: dict[str, Any]) -> dict[str, Any]:
+    from . import settings_service
+
+    paths, keys = _settings_context(runtime)
+    return {
+        "schema_version": 1,
+        "type": "settings.values",
+        "project_dir": str(Path(getattr(runtime, "project_dir", Path.cwd())).resolve()),
+        "values": _settings_values(runtime, op.get("paths", op.get("path"))),
+        "recent_changes": settings_service.recent_changes(keys.parent, limit=5),
+        "paths": {
+            "global": str(paths.global_settings),
+            "project": str(paths.project_settings),
+            "local": str(paths.local_settings),
+            "keys": str(keys),
+        },
+    }
+
+
+def _settings_apply_record(runtime: Any, op: dict[str, Any]) -> dict[str, Any]:
+    """Persist non-secret changes for future sessions; never mutate this one."""
+    from ..model.settings_schema import FIELDS, field_by_path
+    from . import settings_service
+
+    raw_changes = op.get("changes")
+    if not isinstance(raw_changes, list) or len(raw_changes) > len(FIELDS):
+        return {
+            "schema_version": 1,
+            "type": "settings.applied",
+            "ok": False,
+            "error": "settings.apply changes must be an array no longer than the settings registry",
+        }
+    paths, keys = _settings_context(runtime)
+    results: list[dict[str, Any]] = []
+    all_ok = True
+    for raw in raw_changes:
+        if not isinstance(raw, dict):
+            results.append({"ok": False, "error": "setting change must be an object"})
+            all_ok = False
+            continue
+        path = str(raw.get("path", ""))
+        action = str(raw.get("action", ""))
+        scope = str(raw.get("scope", "global"))
+        field = field_by_path(path)
+        if field is None:
+            ok, message = False, f"unknown setting '{path}'"
+        elif field.secret:
+            ok, message = (
+                False,
+                f"{path} is a credential and must be configured on the runtime host",
+            )
+        elif scope not in {"global", "project", "local"}:
+            ok, message = False, "settings scope must be global, project, or local"
+        elif action == "set":
+            value = raw.get("value")
+            if not isinstance(value, str):
+                ok, message = False, f"{path} needs a string wire value"
+            else:
+                ok, message = settings_service.set_value(paths, keys, path, value, scope)  # type: ignore[arg-type]
+        elif action == "unset":
+            ok, message = settings_service.unset_value(paths, keys, path, scope)  # type: ignore[arg-type]
+        else:
+            ok, message = False, "settings action must be set or unset"
+        all_ok = all_ok and ok
+        results.append(
+            {"path": path, "action": action, "scope": scope, "ok": ok, "message": message}
+        )
+    return {
+        "schema_version": 1,
+        "type": "settings.applied",
+        "ok": all_ok,
+        "applies": "next-session",
+        "current_session_changed": False,
+        "results": results,
+        "values": _settings_values(runtime),
+    }
+
+
+def _artifact_read_record(runtime: Any, op: dict[str, Any]) -> dict[str, Any]:
+    """Read one bounded project artifact chunk without permitting path escape."""
+    requested = str(op.get("path", "")).strip()
+    project_dir = Path(getattr(runtime, "project_dir", Path.cwd())).resolve()
+    try:
+        if not requested:
+            raise ValueError("artifact.read needs a path")
+        candidate = Path(requested).expanduser()
+        if not candidate.is_absolute():
+            candidate = project_dir / candidate
+        path = candidate.resolve(strict=True)
+        if not path.is_relative_to(project_dir):
+            raise ValueError("artifact path is outside the session project")
+        if not path.is_file():
+            raise ValueError("artifact path is not a file")
+        size = path.stat().st_size
+        offset = int(op.get("offset", 0) or 0)
+        limit = int(op.get("limit", _ARTIFACT_CHUNK_BYTES) or _ARTIFACT_CHUNK_BYTES)
+        if offset < 0 or offset > size:
+            raise ValueError("artifact offset is outside the file")
+        if limit < 1 or limit > _ARTIFACT_CHUNK_BYTES:
+            raise ValueError(f"artifact limit must be between 1 and {_ARTIFACT_CHUNK_BYTES} bytes")
+        with path.open("rb") as handle:
+            handle.seek(offset)
+            payload = handle.read(limit)
+        media_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return {
+            "schema_version": 1,
+            "type": "artifact.chunk",
+            "ok": True,
+            "path": str(path.relative_to(project_dir)),
+            "name": path.name,
+            "media_type": media_type,
+            "size": size,
+            "offset": offset,
+            "length": len(payload),
+            "eof": offset + len(payload) >= size,
+            "sha256": sha256(payload).hexdigest(),
+            "data": base64.b64encode(payload).decode("ascii"),
+        }
+    except (OSError, TypeError, ValueError) as error:
+        return {
+            "schema_version": 1,
+            "type": "artifact.chunk",
+            "ok": False,
+            "path": requested,
+            "error": str(error),
+        }
 
 
 def _handle_control_op(
@@ -849,6 +1087,10 @@ async def serve(
     actor: str | None = None,
     actor_kind: str = AUTOMATION,
     attachable: bool = False,
+    detached: bool = False,
+    peer_principal: str | None = None,
+    peer_kind: str = AUTOMATION,
+    peer_permissions: str = "read,write,control",
 ) -> int:
     """Boot a RealRuntime and run the interactive protocol loop on stdio.
 
@@ -937,6 +1179,30 @@ async def serve(
                 },
             )
             return 1
+        authorization_policy: AuthorizationPolicy | None = None
+        if peer_principal:
+            permissions = normalize_permissions(peer_permissions.split(","))
+            if not permissions:
+                _emit_raw(
+                    out,
+                    {
+                        "schema_version": 1,
+                        "type": "error",
+                        "error": "network peer has no recognized permissions",
+                        "error_type": "ValueError",
+                    },
+                )
+                await runtime.cleanup()
+                return 1
+            authorization_policy = StaticPolicy(
+                Principal(
+                    principal_id=peer_principal,
+                    kind=normalize_kind(peer_kind),
+                    permissions=permissions,
+                    method="host-adapter",
+                    verified=True,
+                )
+            )
         return await serve_loop(
             runtime,
             source=source,
@@ -944,6 +1210,8 @@ async def serve(
             default_actor=default_actor,
             attach_handoff=attach_handoff,
             attachable=attachable or bool(attach),
+            detached=detached,
+            authorization_policy=authorization_policy,
         )
 
 
@@ -994,11 +1262,13 @@ async def _join_live_session(
 async def serve_loop(
     runtime: RealRuntime,
     *,
-    source: IO[str],
+    source: IO[str] | None,
     out: IO[str],
     default_actor: Actor = ANONYMOUS,
     attach_handoff: str | None = None,
     attachable: bool = False,
+    detached: bool = False,
+    authorization_policy: AuthorizationPolicy | None = None,
     control_factory: Callable[[], SessionControl] | None = None,
 ) -> int:
     """The protocol loop over an already-started ``runtime``: emit session start,
@@ -1069,6 +1339,8 @@ async def serve_loop(
         )
 
     def _read_stdin() -> None:
+        if source is None:
+            return
         for line in source:
             line = line.strip()
             if not line:
@@ -1079,9 +1351,13 @@ async def serve_loop(
                 continue
             if isinstance(op, dict):
                 loop.call_soon_threadsafe(ops.put_nowait, op)
-        loop.call_soon_threadsafe(ops.put_nowait, {"op": "__eof__"})
+        if not detached:
+            loop.call_soon_threadsafe(ops.put_nowait, {"op": "__eof__"})
 
-    threading.Thread(target=_read_stdin, daemon=True, name="serve-stdin").start()
+    if source is not None:
+        threading.Thread(target=_read_stdin, daemon=True, name="serve-stdin").start()
+    elif not detached:
+        ops.put_nowait({"op": "__eof__"})
 
     _emit_raw(
         out,
@@ -1195,7 +1471,7 @@ async def serve_loop(
     # The control plane is materialized lazily (first control op / first op
     # carrying actor|lease|idem) so a legacy client's stream is untouched.
     control: SessionControl | None = None
-    policy: AuthorizationPolicy | None = None
+    policy: AuthorizationPolicy | None = authorization_policy
 
     def _policy() -> AuthorizationPolicy:
         """This project's authorization policy, resolved once per connection.
@@ -1217,7 +1493,9 @@ async def serve_loop(
         if control is None:
             try:
                 control = (
-                    control_factory() if control_factory else _open_control(runtime, default_actor)
+                    control_factory()
+                    if control_factory
+                    else _open_control(runtime, default_actor, policy=policy)
                 )
 
             except Exception as caught:  # noqa: BLE001 -- report, stay legacy-open
@@ -1273,6 +1551,7 @@ async def serve_loop(
             # and it never fires for a project with no tokens issued.
             if control is None and (
                 _wants_control(kind_str, op)
+                or (authorization_policy is not None and kind_str in _GUARDED_OPS)
                 or (kind_str in _GUARDED_OPS and _policy().requires_credential)
             ):
                 _ensure_control()
@@ -1345,7 +1624,17 @@ async def serve_loop(
                         _emit_raw(out, ack)
                         control.remember(idem, [ack])
 
-            if kind == STATUS_OP:
+            if kind == "runtime.capabilities":
+                _emit_raw(out, _runtime_capabilities_record())
+            elif kind == "artifact.read":
+                _emit_raw(out, _artifact_read_record(runtime, op))
+            elif kind == "settings.schema":
+                _emit_raw(out, _settings_schema_record(runtime))
+            elif kind == "settings.get":
+                _emit_raw(out, _settings_get_record(runtime, op))
+            elif kind == "settings.apply":
+                _emit_raw(out, _settings_apply_record(runtime, op))
+            elif kind == STATUS_OP:
                 await _emit_status()
             elif kind == "submit":
                 if turn is not None and not turn.done():
