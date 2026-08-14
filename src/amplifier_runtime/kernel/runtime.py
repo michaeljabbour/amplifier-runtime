@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from collections.abc import Callable, Mapping
 from decimal import Decimal
@@ -141,31 +142,148 @@ Amplifier Studio, so keep it current and factual.
 """Opt-in Studio host guidance for the mounted, session-scoped todo tool."""
 
 STUDIO_PRESENTATION_REMINDER = """<system-reminder source="amplifier-studio-presentation">
-This session is displayed in Amplifier Studio, which can render ordinary Markdown and
-safe, self-contained visual artifacts directly in the conversation.
+This session is displayed in Amplifier Studio. The user never needs to name a fence,
+renderer, MCP server, or tool to get a visual result. Infer the requested outcome from
+ordinary language and the conversation, then choose exactly one primary surface:
 
-Use the presentation layer proactively when it materially improves understanding:
-- Use an `amplifier-html` fenced block for interactive diagrams, animations, simulations,
-  explorable comparisons, controls, or stateful walkthroughs.
-- Use an `amplifier-svg` fenced block for a polished static figure whose geometry you can
-  author directly.
-- Use an `amplifier-dot` fenced block for topology, dependency, state, agent, or process
-  graphs that Graphviz should lay out.
-- Use normal Markdown for prose, tables, code, and simple explanations.
+- Generated image: for a photo, illustration, artwork, hero image, poster, logo, product
+  image, or other raster/GenAI asset, call the mounted image-generation MCP tool. Do not
+  imitate a generated image with SVG, HTML, ASCII, or a screenshot.
+- Interactive experience: for animation, simulation, exploration, controls, toggles,
+  scrubbing, step-through behavior, or a live demonstration, return a self-contained
+  `amplifier-html` fenced block.
+- Architecture or topology: for systems, dependencies, agents, handoffs, workflows,
+  state transitions, execution paths, or process maps, return an `amplifier-dot` fenced
+  block so Graphviz owns the layout. If interaction or animation is explicitly requested,
+  use `amplifier-html` instead.
+- Precise static figure: for a composed timeline, annotated figure, geometric drawing, or
+  presentation-quality static visual, return an `amplifier-svg` fenced block. Use the same
+  route for a static chart or plot when its data can be represented directly; use HTML if
+  the chart needs filters, hover exploration, animation, or controls.
+- Text: use normal Markdown for prose, tables, code, and explanations where a visual would
+  not materially improve understanding.
 
-When the user asks to visualize, animate, demonstrate, compare visually, or show how a
-system works, render the appropriate artifact inline instead of only describing what a
-visual could contain. Put it immediately after the sentence that introduces it, followed
-by a short interpretation. Keep HTML self-contained and responsive; use local scripts and
-styles only, no remote assets or network requests, and size the document naturally without
-nested scrolling. Include clear labels, accessible controls, pause/resume for motion, and a
-useful static first frame. Do not open Finder, Preview, or an external browser merely to
-present the result, and do not substitute a file path, screenshot, ASCII reconstruction, or
-description for the inline artifact. If you also save a `.html` deliverable, include the
-self-contained markup in an `amplifier-html` fence in the response so Studio renders the
-actual experience in chat. Do not add a visual when prose or a small table is clearer.
+Treat natural phrases such as "show me", "map this", "diagram the architecture", "make it
+interactive", "animate it", and "create an image" as sufficient instructions. Do not ask
+the user to restate the request using implementation syntax. When the referent is "this"
+or "it", infer it from the preceding conversation.
+
+Render HTML, SVG, and DOT directly in the response, immediately after the sentence that
+introduces the artifact, followed by a short interpretation. Produce one useful visual,
+not a gallery of redundant formats, unless the user asks to compare formats. Keep HTML
+self-contained and responsive; use local scripts and styles only, no remote assets or
+network requests, and size the document naturally without nested scrolling. Include clear
+labels, accessible controls, pause/resume for motion, and a useful static first frame.
+Do not open Finder, Preview, or an external browser merely to present the result, and do
+not substitute a file path, screenshot, ASCII reconstruction, or description for an inline
+artifact. If you also save a `.html` deliverable, include its self-contained markup in an
+`amplifier-html` fence so Studio renders the actual experience in chat. Do not add a visual
+when prose or a small table is clearer.
 </system-reminder>"""
 """Presentation capability guidance supplied by rich external clients."""
+
+
+_STUDIO_IMAGE_INTENT = re.compile(
+    r"\b(?:create (?:an? )?image|generate (?:an? )?image|gen\s*ai|ai[- ]generated|"
+    r"photoreal(?:istic)?|photo(?:graph)?|illustration|"
+    r"artwork|hero image|poster|logo|product (?:shot|image|photo)|cover art|concept art)\b",
+    re.IGNORECASE,
+)
+_STUDIO_INTERACTIVE_INTENT = re.compile(
+    r"\b(?:interactive|animate(?:d| it| this)?|animation|simulate|simulation|explorable|"
+    r"step[- ]through|scrub(?:ber)?|play(?:back)?|pause|toggle|controls?|live demo)\b",
+    re.IGNORECASE,
+)
+_STUDIO_TOPOLOGY_INTENT = re.compile(
+    r"\b(?:architecture|topology|dependenc(?:y|ies)|agents?|handoffs?|workflow|process map|"
+    r"state (?:machine|transition|diagram)|execution (?:map|path|flow)|system (?:map|diagram)|"
+    r"component (?:map|diagram)|data flow)\b",
+    re.IGNORECASE,
+)
+_STUDIO_STATIC_INTENT = re.compile(
+    r"\b(?:timeline|annotated (?:figure|diagram)|static (?:figure|visual|diagram)|"
+    r"geometric (?:figure|drawing)|presentation[- ]quality figure|chart|plot)\b",
+    re.IGNORECASE,
+)
+_STUDIO_VISUAL_REQUEST = re.compile(
+    r"\b(?:show me|visuali[sz]e|map this|diagram|draw|render|illustrate|create (?:an? )?image|"
+    r"make (?:this|it) (?:visual|interactive)|animate)\b",
+    re.IGNORECASE,
+)
+
+
+def _studio_visual_intent(text: str) -> str | None:
+    """Return a conservative renderer hint for an ordinary-language request."""
+    if _STUDIO_IMAGE_INTENT.search(text):
+        return "generated-image"
+    if _STUDIO_INTERACTIVE_INTENT.search(text):
+        return "amplifier-html"
+    if _STUDIO_TOPOLOGY_INTENT.search(text):
+        return "amplifier-dot"
+    if _STUDIO_STATIC_INTENT.search(text):
+        return "amplifier-svg"
+    if _STUDIO_VISUAL_REQUEST.search(text):
+        return "infer-from-context"
+    return None
+
+
+def _studio_image_tools(coordinator: Any) -> tuple[str, ...]:
+    """Return mounted MCP tools that can produce or edit generated images."""
+    try:
+        tools = coordinator.get("tools") or {}
+    except Exception:  # noqa: BLE001 - optional presentation guidance only
+        return ()
+    if not isinstance(tools, Mapping):
+        return ()
+    matches = []
+    for raw_name in tools:
+        name = str(raw_name)
+        normalized = name.strip().lower().replace("-", "_")
+        if normalized.startswith("mcp_") and re.search(
+            r"(?:^|_)(?:generate|create|edit)_image(?:_|$)", normalized
+        ):
+            matches.append(name)
+    return tuple(sorted(matches))
+
+
+def _studio_presentation_guidance(
+    coordinator: Any,
+    prompt: str,
+    project_dir: Path | None = None,
+) -> str:
+    """Build one turn's presentation policy with actual mounted capabilities."""
+    image_tools = _studio_image_tools(coordinator)
+    intent = _studio_visual_intent(prompt)
+    if image_tools:
+        output_root = (project_dir or Path.cwd()).resolve()
+        git_dir = output_root / ".git"
+        output_dir = (
+            git_dir / "amplifier-studio" / "outputs"
+            if git_dir.is_dir()
+            else output_root / ".amplifier" / "studio-outputs"
+        )
+        image_guidance = (
+            "Mounted image-generation MCP tool(s): "
+            f"{', '.join(f'`{name}`' for name in image_tools)}. For generated-image intent, "
+            "call one of these tools and present the returned image as the visual result. "
+            f"Set its `output_path` to the directory `{output_dir}` so the typed Studio "
+            "artifact boundary can display it inline. Request an image preview when the "
+            "tool supports that option. "
+            "Let the image MCP choose its provider unless the user requests one."
+        )
+    else:
+        image_guidance = (
+            "No image-generation MCP tool is mounted. If the user requests a generated "
+            "image, say that image generation is unavailable in this session; do not silently "
+            "replace it with SVG, HTML, DOT, ASCII art, or an external browser workflow."
+        )
+    intent_guidance = (
+        f"Runtime intent hint for this turn: `{intent}`. Follow that route unless the "
+        "conversation clearly makes another outcome more appropriate."
+        if intent
+        else "No explicit visual intent was detected for this turn. Use a visual only when it materially helps."
+    )
+    return f"{STUDIO_PRESENTATION_REMINDER}\n{image_guidance}\n{intent_guidance}"
 
 
 def _core_version() -> str:
@@ -1600,7 +1718,10 @@ class RealRuntime:
             if _manage_project_plan:
                 await self._inject_studio_project_plan_reminder()
             if _presentation_capabilities:
-                await self._inject_studio_presentation_reminder(_presentation_capabilities)
+                await self._inject_studio_presentation_reminder(
+                    _presentation_capabilities,
+                    prompt_for_model,
+                )
             response = await self._initialized.session.execute(prompt_for_model)
         finally:
             self._executing = False
@@ -1666,7 +1787,11 @@ class RealRuntime:
         except Exception:  # noqa: BLE001 - planning help never makes prompt submission fail
             logger.warning("Studio project-plan reminder injection failed", exc_info=True)
 
-    async def _inject_studio_presentation_reminder(self, capabilities: tuple[str, ...]) -> None:
+    async def _inject_studio_presentation_reminder(
+        self,
+        capabilities: tuple[str, ...],
+        prompt: str,
+    ) -> None:
         """Advertise only the rich presentation surface a client explicitly reports."""
         supported = {"markdown", "amplifier-html", "amplifier-svg", "amplifier-dot", "auto-height"}
         if not supported.intersection(capabilities):
@@ -1679,7 +1804,16 @@ class RealRuntime:
             add_message = getattr(context, "add_message", None)
             if not callable(add_message):
                 return
-            result = add_message({"role": "user", "content": STUDIO_PRESENTATION_REMINDER})
+            result = add_message(
+                {
+                    "role": "user",
+                    "content": _studio_presentation_guidance(
+                        initialized.coordinator,
+                        prompt,
+                        self.project_dir,
+                    ),
+                }
+            )
             if asyncio.iscoroutine(result):
                 await result
         except Exception:  # noqa: BLE001 - presentation help never blocks a turn

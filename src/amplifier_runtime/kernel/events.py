@@ -32,6 +32,7 @@ ts}``. ``session_id``/``parent_id`` come from the payload (stamped by
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
@@ -124,6 +125,16 @@ class ToolPre(_Envelope):
     parallel_group_id: str | None = None
 
 
+class ToolArtifact(BaseModel):
+    """A concrete output produced by a tool and safe for a host to present."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    path: str
+    kind: Literal["file", "image", "diagram", "data"] = "file"
+    media_type: str | None = None
+
+
 class ToolPost(_Envelope):
     """A tool call finished (``tool:post``) — finalize + expandable body.
 
@@ -136,6 +147,7 @@ class ToolPost(_Envelope):
     tool_call_id: str = ""
     tool_input: dict[str, Any] = Field(default_factory=dict)
     result: dict[str, Any] = Field(default_factory=dict)
+    artifacts: tuple[ToolArtifact, ...] = ()
 
 
 class ToolError(_Envelope):
@@ -868,6 +880,77 @@ def _dict(data: Mapping[str, Any], *keys: str) -> dict[str, Any]:
     return {}
 
 
+_OUTPUT_PATH_KEY = re.compile(
+    r"(?:^|_)(?:file|output|artifact|image)_?paths?$|^additional_paths$",
+    re.IGNORECASE,
+)
+_OUTPUT_TOOL = re.compile(
+    r"(?:^|[_:./-])(?:write|create|generate|render|export|save|download|edit|patch|"
+    r"screenshot)(?:[_:./-]|$)",
+    re.IGNORECASE,
+)
+_MARKDOWN_OUTPUT_PATH = re.compile(
+    r"(?:Saved to:|Additional variants?:)?\s*`((?:/|[A-Za-z]:\\|\.\.?/)[^`]+)`",
+    re.IGNORECASE,
+)
+
+
+def _artifact_kind(
+    path: str,
+) -> tuple[Literal["file", "image", "diagram", "data"], str | None]:
+    suffix = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    media_types = {
+        "png": "image/png",
+        "jpg": "image/jpeg",
+        "jpeg": "image/jpeg",
+        "gif": "image/gif",
+        "webp": "image/webp",
+        "avif": "image/avif",
+        "svg": "image/svg+xml",
+    }
+    if suffix in media_types:
+        return "image", media_types[suffix]
+    if suffix in {"dot", "gv", "mermaid", "mmd"}:
+        return "diagram", None
+    if suffix in {"csv", "tsv", "json", "jsonl", "parquet"}:
+        return "data", None
+    return "file", None
+
+
+def _tool_artifacts(tool_name: str, result: Mapping[str, Any]) -> tuple[ToolArtifact, ...]:
+    """Extract concrete output references without treating read paths as outputs."""
+    candidates: list[str] = []
+
+    def collect(value: Any, key: str = "", depth: int = 0) -> None:
+        if depth > 6:
+            return
+        if isinstance(value, str):
+            if _OUTPUT_PATH_KEY.search(key) and re.match(r"^(?:/|[A-Za-z]:\\|\.\.?/)", value):
+                candidates.append(value)
+            elif key == "content" and _OUTPUT_TOOL.search(tool_name):
+                candidates.extend(match.group(1) for match in _MARKDOWN_OUTPUT_PATH.finditer(value))
+            return
+        if isinstance(value, Mapping):
+            for nested_key, nested in value.items():
+                collect(nested, str(nested_key), depth + 1)
+            return
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            for nested in value:
+                collect(nested, key, depth + 1)
+
+    collect(result)
+    artifacts: list[ToolArtifact] = []
+    seen: set[str] = set()
+    for path in candidates:
+        cleaned = path.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        kind, media_type = _artifact_kind(cleaned)
+        artifacts.append(ToolArtifact(path=cleaned, kind=kind, media_type=media_type))
+    return tuple(artifacts)
+
+
 def _error_fields(data: Mapping[str, Any]) -> tuple[str, str]:
     """Extract (type, message) from ``error`` dicts or flat keys."""
     error = data.get("error")
@@ -1025,13 +1108,16 @@ def normalize(event_name: str, data: Mapping[str, Any] | None) -> UIEvent | None
                 parallel_group_id=payload.get("parallel_group_id") or None,
             )
         case "tool:post":
+            tool_name = _str(payload, "tool_name", "name")
+            result = _dict(payload, "result", "tool_response", "response")
             return ToolPost(
                 **env,
-                tool_name=_str(payload, "tool_name", "name"),
+                tool_name=tool_name,
                 tool_call_id=_str(payload, "tool_call_id", "tool_use_id", "id"),
                 tool_input=_dict(payload, "tool_input", "input"),
                 # Payload variance: result | tool_response (RESEARCH-BRIEF §2).
-                result=_dict(payload, "result", "tool_response", "response"),
+                result=result,
+                artifacts=_tool_artifacts(tool_name, result),
             )
         case "tool:error":
             error_type, error_message = _error_fields(payload)
@@ -1398,6 +1484,7 @@ __all__ = [
     "StreamBlockEnd",
     "StreamBlockStart",
     "ToolError",
+    "ToolArtifact",
     "ToolPost",
     "ToolPre",
     "UIEvent",
