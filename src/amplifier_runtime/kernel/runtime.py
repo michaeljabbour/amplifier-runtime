@@ -75,6 +75,8 @@ from .events import (
     ApprovalDenied,
     ContentBlockEnd,
     ContextInjected,
+    DecisionAnswered,
+    DecisionApplied,
     Notification,
     ParsedEvent,
     PromptComplete,
@@ -137,6 +139,29 @@ short answer or a genuinely one-step action. The todo state is user-visible in
 Amplifier Studio, so keep it current and factual.
 </system-reminder>"""
 """Opt-in Studio host guidance for the mounted, session-scoped todo tool."""
+
+STUDIO_PRESENTATION_REMINDER = """<system-reminder source="amplifier-studio-presentation">
+This session is displayed in Amplifier Studio, which can render ordinary Markdown and
+safe, self-contained visual artifacts directly in the conversation.
+
+Use the presentation layer proactively when it materially improves understanding:
+- Use an `amplifier-html` fenced block for interactive diagrams, animations, simulations,
+  explorable comparisons, controls, or stateful walkthroughs.
+- Use an `amplifier-svg` fenced block for a polished static figure whose geometry you can
+  author directly.
+- Use an `amplifier-dot` fenced block for topology, dependency, state, agent, or process
+  graphs that Graphviz should lay out.
+- Use normal Markdown for prose, tables, code, and simple explanations.
+
+When the user asks to visualize, animate, demonstrate, compare visually, or show how a
+system works, render the appropriate artifact inline instead of only describing what a
+visual could contain. Put it immediately after the sentence that introduces it, followed
+by a short interpretation. Keep HTML self-contained and responsive; use local scripts and
+styles only, no remote assets or network requests, and size the document naturally without
+nested scrolling. Include clear labels, accessible controls, pause/resume for motion, and a
+useful static first frame. Do not add a visual when prose or a small table is clearer.
+</system-reminder>"""
+"""Presentation capability guidance supplied by rich external clients."""
 
 
 def _core_version() -> str:
@@ -620,6 +645,7 @@ class RealRuntime:
         # queue item's id — the UI resolves that item (bell, badge, turn
         # deferred-marking) instead of re-deriving data from message text.
         self.needs_you.add_defer_listener(self._decision_deferred)
+        self.needs_you.add_answer_listener(self._decision_answered)
         self.denial_log = denial_log or DenialLog()
         self.broker = ApprovalBroker(
             needs_you=self.needs_you,
@@ -1103,6 +1129,7 @@ class RealRuntime:
             lane_steering=self.lane_steering,
             on_lane_applied=self._lane_steer_applied,
             on_applied=self._steer_applied,
+            on_answers=self._decision_answers_applied,
             # Each applied injection is one more persistent user-role
             # message in the live context; the reducer shifts checkpoint
             # turn ids past it so rewind forks at the true turn boundary
@@ -1288,6 +1315,31 @@ class RealRuntime:
             )
         )
 
+    def _decision_answered(self, item: NeedsYouItem) -> None:
+        """Persist the exact answer as soon as the runtime accepts it."""
+        session_id = self._initialized.session_id if self._initialized else self.session_id
+        self.bridge.emit(
+            DecisionAnswered(
+                session_id=session_id,
+                decision_id=item.decision_id,
+                question=item.question,
+                answer=item.answer,
+            )
+        )
+
+    def _decision_answers_applied(self, items: tuple[NeedsYouItem, ...]) -> None:
+        """Mark accepted answers when they enter model context at a safe boundary."""
+        session_id = self._initialized.session_id if self._initialized else self.session_id
+        for item in items:
+            self.bridge.emit(
+                DecisionApplied(
+                    session_id=session_id,
+                    decision_id=item.decision_id,
+                    question=item.question,
+                    answer=item.answer,
+                )
+            )
+
     def _governance_blocked(self, action: str, reason: str) -> None:
         session_id = self._initialized.session_id if self._initialized else ""
         self.bridge.emit(
@@ -1459,6 +1511,7 @@ class RealRuntime:
         _expanded_prompt: str | None = None,
         _on_admitted: Callable[[], None] | None = None,
         _manage_project_plan: bool = False,
+        _presentation_capabilities: tuple[str, ...] = (),
     ) -> str:
         """Execute one user turn; returns the final response text.
 
@@ -1542,6 +1595,8 @@ class RealRuntime:
             )
             if _manage_project_plan:
                 await self._inject_studio_project_plan_reminder()
+            if _presentation_capabilities:
+                await self._inject_studio_presentation_reminder(_presentation_capabilities)
             response = await self._initialized.session.execute(prompt_for_model)
         finally:
             self._executing = False
@@ -1606,6 +1661,25 @@ class RealRuntime:
                 await result
         except Exception:  # noqa: BLE001 - planning help never makes prompt submission fail
             logger.warning("Studio project-plan reminder injection failed", exc_info=True)
+
+    async def _inject_studio_presentation_reminder(self, capabilities: tuple[str, ...]) -> None:
+        """Advertise only the rich presentation surface a client explicitly reports."""
+        supported = {"markdown", "amplifier-html", "amplifier-svg", "amplifier-dot", "auto-height"}
+        if not supported.intersection(capabilities):
+            return
+        initialized = self._initialized
+        if initialized is None:
+            return
+        try:
+            context = initialized.coordinator.get("context")
+            add_message = getattr(context, "add_message", None)
+            if not callable(add_message):
+                return
+            result = add_message({"role": "user", "content": STUDIO_PRESENTATION_REMINDER})
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:  # noqa: BLE001 - presentation help never blocks a turn
+            logger.warning("Studio presentation reminder injection failed", exc_info=True)
 
     async def _retry_rewind_recovery(self) -> None:
         """Reconcile disk and live context before accepting a later prompt."""
