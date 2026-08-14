@@ -18,6 +18,8 @@ Wire (one JSON object per line):
 
   IN  (stdin)   {"op": "submit",    "text": "...",
                  "manage_project_plan": true,
+                 "presentation_capabilities": ["markdown", "amplifier-html", "amplifier-svg",
+                                               "amplifier-dot", "auto-height"],
                  "attachments": [{"media_type": "image/png", "data": "<base64>"}]}
                  (``manage_project_plan`` asks the mounted todo tool to manage
                  multi-step work; ``attachments`` is optional; at most 4 PNG/JPEG/GIF/WebP images,
@@ -61,6 +63,8 @@ Wire (one JSON object per line):
                 {"schema_version": 1, "type": "approval.required",
                  "ticket_id": "approval-3", "prompt": "...", "options": [...],
                  "session_id": "...", "parent_id": null, "tool_call_id": "..."}
+                {"schema_version": 1, "type": "approval.result" | "decision.result",
+                 "ok": false, "error": "..."} (an invalid/stale answer was not applied)
                 {"schema_version": 1, "type": "goal.state" | "goal.result",
                  "ok": true, "action": "status" | "set" | "cleared",
                  "active": true, "detail": "...", "condition": "...", "max_turns": 5}
@@ -1366,6 +1370,13 @@ async def serve_loop(
                         text,
                         attachments,
                         manage_project_plan=op.get("manage_project_plan") is True,
+                        presentation_capabilities=tuple(
+                            str(item)
+                            for item in op.get("presentation_capabilities", ())
+                            if isinstance(item, str)
+                        )
+                        if isinstance(op.get("presentation_capabilities"), (list, tuple))
+                        else (),
                     )
                 )
             elif kind == "goal.set":
@@ -1402,8 +1413,18 @@ async def serve_loop(
                 if ticket:
                     try:
                         runtime.broker.answer(ticket, choice)
-                    except KeyError:
-                        pass  # already resolved / timed out
+                    except (KeyError, ValueError) as caught:
+                        _emit_raw(
+                            out,
+                            {
+                                "schema_version": 1,
+                                "type": "approval.result",
+                                "ok": False,
+                                "ticket_id": str(ticket),
+                                "choice": choice,
+                                "error": str(caught),
+                            },
+                        )
             elif kind == "decision":
                 # Answer a DEFERRED needs-you decision (additive op). A
                 # deferral has NO live broker ticket — governance parked the
@@ -1419,8 +1440,18 @@ async def serve_loop(
                 if decision_id and answer:
                     try:
                         runtime.needs_you.answer(decision_id, answer)
-                    except (KeyError, ValueError):
-                        pass
+                    except (KeyError, ValueError) as caught:
+                        _emit_raw(
+                            out,
+                            {
+                                "schema_version": 1,
+                                "type": "decision.result",
+                                "ok": False,
+                                "decision_id": decision_id,
+                                "answer": answer,
+                                "error": str(caught),
+                            },
+                        )
             elif kind in _TAG_OPS:
                 # Additive synchronous metadata ops (session tag CRUD): one
                 # request -> one response record, no turn, no amplifier-core.
@@ -1513,17 +1544,19 @@ async def _run_turn(
     attachments: tuple[ImageAttachment, ...] = (),
     *,
     manage_project_plan: bool = False,
+    presentation_capabilities: tuple[str, ...] = (),
 ) -> str:
     """Execute one turn and emit its terminal record. Events stream via _pump."""
     try:
         # Preserve the original call shape for text-only clients and test/runtime
         # adapters that predate attachments. RealRuntime receives the typed tuple
         # only when images were actually present on the wire.
-        if manage_project_plan:
+        if manage_project_plan or presentation_capabilities:
             response = await runtime.submit(
                 text,
                 attachments,
-                _manage_project_plan=True,
+                _manage_project_plan=manage_project_plan,
+                _presentation_capabilities=presentation_capabilities,
             )
         else:
             response = (

@@ -57,6 +57,20 @@ def test_is_allow_family_matching() -> None:
     assert not is_allow("Skip")
 
 
+def test_needs_you_answer_listener_receives_the_exact_accepted_decision() -> None:
+    queue = NeedsYouQueue()
+    answered = []
+    remove = queue.add_answer_listener(answered.append)
+    item = queue.defer("Which route?", choices=("Direct", "Adapter"))
+
+    accepted = queue.answer(item.decision_id, "Direct")
+
+    assert answered == [accepted]
+    assert accepted.question == "Which route?"
+    assert accepted.answer == "Direct"
+    remove()
+
+
 # -- FIFO / answer ---------------------------------------------------------------
 
 

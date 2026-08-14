@@ -331,7 +331,7 @@ async def test_serve_submit_decodes_and_forwards_valid_image_attachments() -> No
     assert await server == 0
 
 
-async def test_serve_submit_forwards_studio_project_plan_policy() -> None:
+async def test_serve_submit_forwards_studio_project_plan_and_presentation_policy() -> None:
     runtime = _FakeImageRuntime()
     received: list[dict[str, Any]] = []
 
@@ -351,12 +351,30 @@ async def test_serve_submit_forwards_studio_project_plan_policy() -> None:
             "op": "submit",
             "text": "implement the release",
             "manage_project_plan": True,
+            "presentation_capabilities": [
+                "markdown",
+                "amplifier-html",
+                "amplifier-svg",
+                "amplifier-dot",
+                "auto-height",
+            ],
         }
     )
     await _wait_until(lambda: out.find("turn.completed") is not None)
 
     assert runtime.submissions[0][0] == "implement the release"
-    assert received == [{"_manage_project_plan": True}]
+    assert received == [
+        {
+            "_manage_project_plan": True,
+            "_presentation_capabilities": (
+                "markdown",
+                "amplifier-html",
+                "amplifier-svg",
+                "amplifier-dot",
+                "auto-height",
+            ),
+        }
+    ]
 
     stdin.close()
     assert await server == 0
@@ -521,7 +539,7 @@ async def test_serve_decision_op_answers_deferred_decision() -> None:
     stdin.feed({"op": "submit", "text": "keep going"})
     await asyncio.wait_for(runtime.mid_turn.wait(), timeout=5.0)
 
-    # Unknown ids and malformed ops are swallowed (client already told).
+    # Unknown ids return a visible rejection without killing the session.
     stdin.feed({"op": "decision", "decision_id": "decision-999", "answer": "Allow once"})
     stdin.feed({"op": "decision", "decision_id": "", "answer": "Allow once"})
     stdin.feed({"op": "decision", "decision_id": item.decision_id, "answer": "Allow once"})
@@ -533,6 +551,10 @@ async def test_serve_decision_op_answers_deferred_decision() -> None:
     )
     answered = next(i for i in runtime.needs_you.items if i.decision_id == item.decision_id)
     assert answered.answer == "Allow once"
+    rejected = out.find("decision.result")
+    assert rejected is not None
+    assert rejected["ok"] is False
+    assert rejected["decision_id"] == "decision-999"
 
     # The next step boundary consumes it (the injection the model sees).
     runtime.resume.set()

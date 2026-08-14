@@ -364,6 +364,7 @@ class NeedsYouQueue(_ListenerMixin):
         self._next_id = 1
         self._items: list[NeedsYouItem] = []
         self._defer_listeners: list[Callable[[NeedsYouItem], None]] = []
+        self._answer_listeners: list[Callable[[NeedsYouItem], None]] = []
 
     def add_defer_listener(self, listener: Callable[[NeedsYouItem], None]) -> Callable[[], None]:
         """Register a per-item deferral callback; returns its removal.
@@ -376,6 +377,22 @@ class NeedsYouQueue(_ListenerMixin):
         def remove() -> None:
             if listener in self._defer_listeners:
                 self._defer_listeners.remove(listener)
+
+        return remove
+
+    def add_answer_listener(self, listener: Callable[[NeedsYouItem], None]) -> Callable[[], None]:
+        """Register a callback for each accepted human answer.
+
+        A generic change listener can tell a client that the queue changed,
+        but not which decision was answered or what answer was accepted.  The
+        runtime uses this exact-item callback to create a durable audit event
+        that every presentation can render and replay.
+        """
+        self._answer_listeners.append(listener)
+
+        def remove() -> None:
+            if listener in self._answer_listeners:
+                self._answer_listeners.remove(listener)
 
         return remove
 
@@ -483,7 +500,10 @@ class NeedsYouQueue(_ListenerMixin):
         clean_answer = _clean_line(answer, 4_096)
         if not clean_answer:
             raise ValueError("decision answer cannot be empty")
-        return self._transition(decision_id, "answered", clean_answer)
+        item = self._transition(decision_id, "answered", clean_answer)
+        for listener in tuple(self._answer_listeners):
+            listener(item)
+        return item
 
     def consume(self, decision_id: str) -> NeedsYouItem | None:
         """Mark ONE answered decision consumed and return it (or ``None``).

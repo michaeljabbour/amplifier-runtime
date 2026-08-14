@@ -457,6 +457,24 @@ class ApprovalDenied(_Envelope):
     continuation: str = ""
 
 
+class DecisionAnswered(_Envelope):
+    """A deferred decision answer was accepted into the runtime queue."""
+
+    kind: Literal["decision_answered"] = "decision_answered"
+    decision_id: str = ""
+    question: str = ""
+    answer: str = ""
+
+
+class DecisionApplied(_Envelope):
+    """An accepted decision reached a provider step boundary."""
+
+    kind: Literal["decision_applied"] = "decision_applied"
+    decision_id: str = ""
+    question: str = ""
+    answer: str = ""
+
+
 class CancelRequested(_Envelope):
     """Interrupt requested (``cancel:requested``) — esc while running."""
 
@@ -607,6 +625,8 @@ UIEvent = Annotated[
     | ApprovalRequired
     | ApprovalGranted
     | ApprovalDenied
+    | DecisionAnswered
+    | DecisionApplied
     | CancelRequested
     | CancelCompleted
     | AgentSpawned
@@ -1350,6 +1370,8 @@ __all__ = [
     "ContentBlockStart",
     "ContextCompacted",
     "ContextInjected",
+    "DecisionAnswered",
+    "DecisionApplied",
     "ExecutionEnd",
     "ExecutionStart",
     "GoalProgress",
