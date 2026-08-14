@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 
 import pytest
@@ -15,7 +16,7 @@ def test_pasted_local_document_paths_preserve_multiple_files(tmp_path) -> None:
     second = tmp_path / "requirements.pdf"
     first.write_text("brief", encoding="utf-8")
     second.write_bytes(b"pdf")
-    dropped = " ".join(str(path).replace(" ", "\\ ") for path in (first, second))
+    dropped = " ".join(shlex.quote(str(path)) for path in (first, second))
 
     assert pasted_local_file_paths(dropped) == (first.resolve(), second.resolve())
 
