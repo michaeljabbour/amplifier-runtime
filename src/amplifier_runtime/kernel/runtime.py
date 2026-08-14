@@ -48,6 +48,7 @@ from .config import (
     ResolvedConfig,
     SettingsPaths,
     active_bundle_name,
+    amplifier_home_path,
     added_bundle_uris,
     bundle_search_paths,
     deferred_overlay_uris,
@@ -914,7 +915,14 @@ class RealRuntime:
         resume_reason = "active"
         boot_bundle = self._bundle
         if self._resume_id:
-            session_id = store.find_session(self._resume_id)
+            try:
+                session_id = store.find_session(self._resume_id)
+            except FileNotFoundError:
+                session_id, source = store.relocate_from_any_project(
+                    self._resume_id,
+                    project_dir=self.project_dir,
+                )
+                logger.info("Relocated session %s from %s", session_id, source)
             transcript, metadata = store.load(session_id)
             transcript, tool_repairs = complete_orphaned_tool_results(transcript)
             if tool_repairs:
@@ -951,7 +959,7 @@ class RealRuntime:
             # BEFORE the golden path takes its bundle argument.
             project_dir = (self._project_dir or Path.cwd()).resolve()
             settings = load_merged_settings(
-                SettingsPaths.default(project_dir, Path.home() / ".amplifier")
+                SettingsPaths.default(project_dir, amplifier_home_path())
             )
             boot_bundle, resume_reason = _plan_resume_bundle(
                 stored_bundle,
@@ -2451,7 +2459,7 @@ class RealRuntime:
         catalog = build_deferred_catalog(
             resolved.deferred_overlays,
             resolved.settings,
-            bundle_search_paths(resolved.project_dir, Path.home() / ".amplifier"),
+            bundle_search_paths(resolved.project_dir, amplifier_home_path()),
         )
         # Summon tool: mounted directly onto the coordinator (the seam
         # foundation itself uses for a Python tool — loader_grpc mounts a
@@ -2512,7 +2520,7 @@ class RealRuntime:
         try:
             entries = list_known_bundles(
                 self._resolved.project_dir,
-                Path.home() / ".amplifier",
+                amplifier_home_path(),
             )
         except Exception:  # noqa: BLE001 — the deferred/added catalog still works
             entries = ()
@@ -2530,7 +2538,7 @@ class RealRuntime:
         uri = resolve_deferred_bundle(target, settings)
         if uri is not None:
             return uri
-        search = bundle_search_paths(resolved.project_dir, Path.home() / ".amplifier")
+        search = bundle_search_paths(resolved.project_dir, amplifier_home_path())
         uri = resolve_bundle_name(target, settings, search)
         if uri is not None:
             return uri
@@ -2540,7 +2548,7 @@ class RealRuntime:
         try:
             entries = list_known_bundles(
                 resolved.project_dir,
-                Path.home() / ".amplifier",
+                amplifier_home_path(),
             )
         except Exception:  # noqa: BLE001 — an unknown target is reported below
             return None
@@ -2618,7 +2626,7 @@ class RealRuntime:
         # Bridge the same settings sections the boot path bridges, and strip
         # any TUI-corrupting printing hooks the overlay drags in, BEFORE mount.
         inject_mode_search_paths(mount_plan, packaged_modes_dir())
-        inject_routing_config(mount_plan, settings, Path.home() / ".amplifier")
+        inject_routing_config(mount_plan, settings, amplifier_home_path())
         inject_telemetry_config(mount_plan, settings)
         inject_notifications_config(mount_plan, settings)
         _apply_hook_suppression(mount_plan, self.bridge.emit, suppressed_hooks_setting(settings))

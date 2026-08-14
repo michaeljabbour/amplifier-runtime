@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ..model.redaction import scrub_value
-from .config import get_project_slug
+from .config import amplifier_home_path, get_project_slug
 from .events import UIEvent
 
 logger = logging.getLogger(__name__)
@@ -236,7 +236,7 @@ class SessionStore:
     ) -> None:
         if base_dir is None:
             base_dir = (
-                Path.home() / ".amplifier" / "projects" / get_project_slug(project_dir) / "sessions"
+                amplifier_home_path() / "projects" / get_project_slug(project_dir) / "sessions"
             )
         self.base_dir = base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
@@ -712,6 +712,90 @@ class SessionStore:
         if len(matches) > 1:
             raise AmbiguousSessionError(partial_id, matches)
         return matches[0]
+
+    def relocate_from_any_project(
+        self,
+        partial_id: str,
+        *,
+        project_dir: Path,
+        top_level_only: bool = True,
+    ) -> tuple[str, Path]:
+        """Copy a complete stored session into this project's store.
+
+        Durable session identity belongs to Runtime, not whichever client
+        happened to resume it. If a repository directory was renamed, search
+        sibling project stores under ``AMPLIFIER_HOME``, refuse a live owner,
+        copy the entire durability unit (not only transcript/metadata), and
+        update the stored working directory atomically.
+        """
+        partial_id = partial_id.strip()
+        if not partial_id:
+            raise ValueError("Session ID cannot be empty")
+        projects_dir = amplifier_home_path() / "projects"
+        candidates: list[Path] = []
+        matched_ids: set[str] = set()
+        if projects_dir.is_dir():
+            for project_store in projects_dir.iterdir():
+                sessions = project_store / "sessions"
+                if not sessions.is_dir() or sessions == self.base_dir:
+                    continue
+                for session_dir in sessions.iterdir():
+                    session_id = session_dir.name
+                    if (
+                        not session_dir.is_dir()
+                        or session_id.startswith(".")
+                        or not session_id.startswith(partial_id)
+                        or (top_level_only and not is_top_level_session(session_id))
+                    ):
+                        continue
+                    matched_ids.add(session_id)
+                    candidates.append(session_dir)
+        if not candidates:
+            raise FileNotFoundError(f"No session found matching '{partial_id}'")
+        if len(matched_ids) > 1:
+            raise AmbiguousSessionError(partial_id, sorted(matched_ids))
+        candidates.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        source = candidates[0]
+        session_id = source.name
+
+        from .session_attach import live_endpoint
+
+        if live_endpoint(source) is not None:
+            raise RuntimeError(
+                "The stored session still has a live owner in its original project; "
+                "attach there or stop it before relocating"
+            )
+        destination = self.session_dir(session_id)
+        if destination.exists():
+            raise FileExistsError(
+                f"Destination session '{session_id}' already exists but is not resumable"
+            )
+        temporary = self.base_dir / f".{session_id}.relocate-{os.getpid()}"
+        if temporary.exists():
+            shutil.rmtree(temporary)
+        try:
+            shutil.copytree(
+                source,
+                temporary,
+                ignore=shutil.ignore_patterns(
+                    "attach.json",
+                    "attach.sock",
+                    "*.lock",
+                    "*.tmp",
+                ),
+            )
+            os.replace(temporary, destination)
+            metadata = self._load_metadata(destination)
+            metadata["working_dir"] = str(Path(project_dir).resolve())
+            metadata["relocated_from"] = str(source)
+            self._save_metadata(destination, metadata)
+        except Exception:
+            if temporary.exists():
+                shutil.rmtree(temporary)
+            if destination.exists():
+                shutil.rmtree(destination)
+            raise
+        return session_id, source
 
     # -- lifecycle mutation (delete / cleanup) ------------------------------
 

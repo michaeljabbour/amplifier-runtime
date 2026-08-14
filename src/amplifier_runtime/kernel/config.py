@@ -343,6 +343,16 @@ def map_provider_ids_to_instance_ids(mount_plan: dict[str, Any]) -> None:
             provider["instance_id"] = provider["id"]
 
 
+def amplifier_home_path(amplifier_home: Path | None = None) -> Path:
+    """Resolve the relocatable durability root shared by every runtime surface."""
+    if amplifier_home is not None:
+        return amplifier_home.expanduser().resolve()
+    configured = os.environ.get("AMPLIFIER_HOME", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path.home() / ".amplifier"
+
+
 def load_keys_env(amplifier_home: Path | None = None) -> None:
     """Load ``~/.amplifier/keys.env`` into the process environment.
 
@@ -355,7 +365,7 @@ def load_keys_env(amplifier_home: Path | None = None) -> None:
     only in ``keys.env`` fails to mount. Existing env wins (never clobber
     a value the user exported), matching app-cli exactly.
     """
-    keys_file = (amplifier_home or (Path.home() / ".amplifier")) / "keys.env"
+    keys_file = amplifier_home_path(amplifier_home) / "keys.env"
     if not keys_file.exists():
         return
     try:
@@ -1591,7 +1601,7 @@ async def resolve_config(
         BundleNotFoundError: When the bundle cannot be discovered.
     """
     project_dir = (project_dir or Path.cwd()).resolve()
-    amplifier_home = amplifier_home or (Path.home() / ".amplifier")
+    amplifier_home = amplifier_home_path(amplifier_home)
 
     # 0. Provider creds/endpoints live in ~/.amplifier/keys.env; load them
     #    before ${VAR} expansion so settings placeholders resolve like the
@@ -1782,7 +1792,7 @@ async def prepare_live_overlay_bundle(
     ``PreparedBundle`` so it can render and inject behavioral content into the
     already-running context before the next turn.
     """
-    amplifier_home = amplifier_home or (Path.home() / ".amplifier")
+    amplifier_home = amplifier_home_path(amplifier_home)
     from amplifier_foundation import load_bundle  # lazy: keep module import light
 
     registry = _bundle_registry_for(settings, amplifier_home)
@@ -1832,6 +1842,7 @@ __all__ = [
     "BundleNotFoundError",
     "ResolvedConfig",
     "SettingsPaths",
+    "amplifier_home_path",
     "ProviderNotConfiguredError",
     "active_bundle_name",
     "added_bundle_uris",

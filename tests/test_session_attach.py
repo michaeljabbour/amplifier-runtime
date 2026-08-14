@@ -218,6 +218,21 @@ def test_the_fanout_writer_is_transparent_without_peers() -> None:
     assert sink.text == '{"type":"session.started"}\n'
 
 
+def test_the_fanout_writer_survives_a_closed_launcher_pipe() -> None:
+    class ClosedPipe:
+        def write(self, _text: str) -> int:
+            raise BrokenPipeError
+
+        def flush(self) -> None:
+            raise BrokenPipeError
+
+    writer = FanoutWriter(cast(IO[str], ClosedPipe()))
+    payload = '{"type":"runtime.event"}\n'
+    assert writer.write(payload) == len(payload)
+    writer.flush()
+    assert writer.primary_available is False
+
+
 @pytest.mark.asyncio
 async def test_the_fanout_writer_never_skips_the_primary_client(
     tmp_path: Path,

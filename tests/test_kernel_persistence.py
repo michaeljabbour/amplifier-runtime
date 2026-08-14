@@ -879,3 +879,38 @@ def test_transcript_ok_true_when_backup_recovers_a_corrupt_main(store: SessionSt
     session_dir = store.session_dir("s1")
     (session_dir / TRANSCRIPT_FILENAME).write_bytes(b"\xff\xfe\x00not-utf8\n")
     assert store.transcript_ok("s1") is True
+
+
+def test_runtime_relocates_the_complete_session_after_project_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "amplifier-home"
+    old_project = tmp_path / "old-name"
+    new_project = tmp_path / "new-name"
+    old_project.mkdir()
+    new_project.mkdir()
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+    source_store = SessionStore(project_dir=old_project)
+    source_store.save(
+        "session-123",
+        [{"role": "user", "content": "keep me"}],
+        {"session_id": "session-123", "working_dir": str(old_project)},
+    )
+    source_dir = source_store.session_dir("session-123")
+    (source_dir / "audit.jsonl").write_text('{"operation":"submit"}\n', encoding="utf-8")
+    (source_dir / "attach.json").write_text("{}", encoding="utf-8")
+
+    destination_store = SessionStore(project_dir=new_project)
+    session_id, relocated_from = destination_store.relocate_from_any_project(
+        "session-1", project_dir=new_project
+    )
+
+    assert session_id == "session-123"
+    assert relocated_from == source_dir
+    transcript, metadata = destination_store.load(session_id)
+    assert transcript == [{"role": "user", "content": "keep me"}]
+    assert metadata["working_dir"] == str(new_project.resolve())
+    assert metadata["relocated_from"] == str(source_dir)
+    destination = destination_store.session_dir(session_id)
+    assert (destination / "audit.jsonl").is_file()
+    assert not (destination / "attach.json").exists()

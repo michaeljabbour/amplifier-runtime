@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass
 import json
+from pathlib import Path
 from typing import Any, Literal
 
 import click
@@ -186,9 +187,19 @@ def bundle_list(all_bundles: bool, output_format: str) -> None:
 @bundle.command("add")
 @click.argument("uri")
 @click.option("--name", "name", default=None)
+@click.option(
+    "--warm/--no-warm",
+    default=False,
+    help="Prepare and install the bundle's modules before registering it.",
+)
 @_scope_options
 def bundle_add(
-    uri: str, name: str | None, is_global: bool, is_project: bool, is_local: bool
+    uri: str,
+    name: str | None,
+    warm: bool,
+    is_global: bool,
+    is_project: bool,
+    is_local: bool,
 ) -> None:
     """Validate and register one bundle URI for discovery."""
     from .kernel import bundle_admin
@@ -196,6 +207,11 @@ def bundle_add(
     info = asyncio.run(bundle_admin.load_bundle_info(uri))
     if info is None:
         raise click.ClickException(f"could not load bundle from: {uri}")
+    if warm:
+        result = asyncio.run(bundle_admin.warm_bundle(uri, project_dir=Path.cwd()))
+        if not result.ok:
+            raise click.ClickException(f"could not warm bundle '{uri}': {result.message}")
+        click.echo(f"warmed {uri} · {result.message}")
     resolved_name = (name or info.name).strip()
     if not resolved_name:
         raise click.UsageError("bundle name cannot be empty")
@@ -204,6 +220,24 @@ def bundle_add(
         bundle_admin.settings_paths(None, None), resolved_name, uri, scope
     )
     click.echo(f"registered {resolved_name} -> {uri} ({scope}: {target})")
+
+
+@bundle.command("warm")
+@click.argument("uri")
+@click.option(
+    "--project-dir",
+    type=click.Path(path_type=Path, file_okay=False, resolve_path=True),
+    default=None,
+    help="Project context used while resolving the bundle.",
+)
+def bundle_warm(uri: str, project_dir: Path | None) -> None:
+    """Prepare a bundle and install its modules before a session boots."""
+    from .kernel import bundle_admin
+
+    result = asyncio.run(bundle_admin.warm_bundle(uri, project_dir=project_dir or Path.cwd()))
+    if not result.ok:
+        raise click.ClickException(f"could not warm bundle '{uri}': {result.message}")
+    click.echo(f"warmed {uri} · {result.message}")
 
 
 @main.group()
@@ -228,12 +262,56 @@ def _source_line(resolved) -> str:  # type: ignore[no-untyped-def]
 
 @settings.command("get")
 @click.argument("target", required=False)
-def settings_get(target: str | None) -> None:
+@click.option("--json", "as_json", is_flag=True, help="Emit a redacted machine-readable snapshot.")
+def settings_get(target: str | None, as_json: bool) -> None:
     """List sections, or read one section or redacted setting."""
     from .kernel import settings_service
     from .model import settings_schema
 
     paths, keys = _settings_locations()
+    if as_json:
+        field = settings_schema.field_by_path(target) if target else None
+        if target is None:
+            fields = settings_schema.FIELDS
+        elif field is not None:
+            fields = (field,)
+        else:
+            fields = settings_schema.fields_in_section(target)
+            if not fields:
+                raise click.UsageError(f"unknown setting or section '{target}'")
+        values = []
+        for selected in fields:
+            resolved = settings_service.resolve_field(paths, keys, selected)
+            values.append(
+                {
+                    "path": selected.path,
+                    "display": resolved.display,
+                    "source": resolved.source,
+                    "sourceLabel": _source_line(resolved).removeprefix("source: "),
+                    "sourceFile": str(resolved.source_file) if resolved.source_file else None,
+                    "applies": selected.applies,
+                    "remoteWritable": not selected.secret,
+                }
+            )
+        click.echo(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "type": "settings.values",
+                    "projectDir": str(Path.cwd().resolve()),
+                    "version": __version__,
+                    "values": values,
+                    "paths": {
+                        "global": str(paths.global_settings),
+                        "project": str(paths.project_settings),
+                        "local": str(paths.local_settings),
+                        "keys": str(keys),
+                    },
+                    "recentChanges": settings_service.recent_changes(keys.parent, limit=5),
+                }
+            )
+        )
+        return
     if target is None:
         for section in settings_schema.SECTIONS:
             click.echo(f"{section.id}  {section.summary}")
@@ -344,6 +422,12 @@ def config_paths(as_json: bool) -> None:
 @click.option("--mode", default=None, help="Initial interaction mode.")
 @click.option("--resume", "resume_id", default=None, metavar="SESSION_ID")
 @click.option("--attach", default=None, metavar="REF")
+@click.option(
+    "--project-dir",
+    type=click.Path(path_type=Path, file_okay=False, resolve_path=True),
+    default=None,
+    help="Project working tree for this session (defaults to the current directory).",
+)
 @click.option("--actor", default=None, metavar="ID")
 @click.option(
     "--actor-kind",
@@ -352,6 +436,20 @@ def config_paths(as_json: bool) -> None:
     show_default=True,
 )
 @click.option("--attachable/--no-attachable", default=False, show_default=True)
+@click.option(
+    "--detached/--no-detached",
+    default=False,
+    show_default=True,
+    help="Keep an attachable owner alive after its launching pipe closes.",
+)
+@click.option("--peer-principal", default=None, hidden=True)
+@click.option(
+    "--peer-kind",
+    type=click.Choice(("human", "automation")),
+    default="automation",
+    hidden=True,
+)
+@click.option("--peer-permissions", default="read,write,control", hidden=True)
 def serve(
     bundle: str | None,
     model: str | None,
@@ -359,14 +457,21 @@ def serve(
     mode: str | None,
     resume_id: str | None,
     attach: str | None,
+    project_dir: Path | None,
     actor: str | None,
     actor_kind: str,
     attachable: bool,
+    detached: bool,
+    peer_principal: str | None,
+    peer_kind: str,
+    peer_permissions: str,
 ) -> None:
     """Serve one interactive session as bidirectional JSONL on stdio."""
 
     if (model is None) != (provider is None):
         raise click.UsageError("--model and --provider must be supplied together")
+    if detached and not attachable:
+        raise click.UsageError("--detached requires --attachable")
 
     from .kernel.serve import serve as serve_runtime
 
@@ -376,9 +481,14 @@ def serve(
         "provider": provider,
         "resume_id": resume_id,
         "attach": attach,
+        "project_dir": project_dir,
         "actor": actor,
         "actor_kind": actor_kind,
         "attachable": attachable,
+        "detached": detached,
+        "peer_principal": peer_principal,
+        "peer_kind": peer_kind,
+        "peer_permissions": peer_permissions,
     }
     raise SystemExit(asyncio.run(serve_runtime(bundle, **kwargs)))
 

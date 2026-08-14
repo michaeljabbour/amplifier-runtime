@@ -350,16 +350,29 @@ class FanoutWriter:
     def __init__(self, primary: IO[str], server: AttachServer | None = None) -> None:
         self.primary = primary
         self.server = server
+        self.primary_available = True
 
     def write(self, text: str) -> int:
-        written = self.primary.write(text)
+        written = len(text)
+        if self.primary_available:
+            try:
+                written = self.primary.write(text)
+            except (BrokenPipeError, ConnectionError, OSError, ValueError):
+                # A detached owner outlives its launcher. Losing that launch
+                # pipe must not kill the runtime or prevent later peers from
+                # adopting the live session through its attach socket.
+                self.primary_available = False
         if self.server is not None:
             self.server.broadcast(text)
         return written
 
     def flush(self) -> None:
-        with contextlib.suppress(Exception):
+        if not self.primary_available:
+            return
+        try:
             self.primary.flush()
+        except Exception:  # noqa: BLE001 - a closed launcher pipe is a detach
+            self.primary_available = False
 
 
 async def run_attach_client(
