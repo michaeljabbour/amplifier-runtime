@@ -159,7 +159,11 @@ visual could contain. Put it immediately after the sentence that introduces it, 
 by a short interpretation. Keep HTML self-contained and responsive; use local scripts and
 styles only, no remote assets or network requests, and size the document naturally without
 nested scrolling. Include clear labels, accessible controls, pause/resume for motion, and a
-useful static first frame. Do not add a visual when prose or a small table is clearer.
+useful static first frame. Do not open Finder, Preview, or an external browser merely to
+present the result, and do not substitute a file path, screenshot, ASCII reconstruction, or
+description for the inline artifact. If you also save a `.html` deliverable, include the
+self-contained markup in an `amplifier-html` fence in the response so Studio renders the
+actual experience in chat. Do not add a visual when prose or a small table is clearer.
 </system-reminder>"""
 """Presentation capability guidance supplied by rich external clients."""
 

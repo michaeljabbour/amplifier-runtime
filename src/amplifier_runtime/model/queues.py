@@ -217,7 +217,13 @@ class SteeringQueue(_ListenerMixin):
 
     def drain_steers(self) -> tuple[QueuedMessage, ...]:
         """Remove and return all leftover steers (turn ended before they
-        applied) — the app discards them at turn end (mockup §5)."""
+        applied).
+
+        The session host owns the disposition of these messages.  A steer that
+        missed the final model boundary is still user-authored input, so the
+        JSONL host promotes it to a visible follow-up turn instead of silently
+        discarding it.
+        """
         with self._lock:
             leftover = tuple(m for m in self._pending if m.kind == "steer")
             if leftover:
