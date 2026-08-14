@@ -193,6 +193,47 @@ def test_append_and_read_events(store: SessionStore) -> None:
     assert len(lines) == 2
 
 
+def test_tool_post_carries_typed_imagen_artifact_from_mcp_markdown() -> None:
+    event = normalize(
+        "tool:post",
+        {
+            "session_id": "s1",
+            "tool_name": "mcp_imagegen_generate_image",
+            "tool_call_id": "image-1",
+            "result": {
+                "content": (
+                    "## Image Generated Successfully\n\n"
+                    "Saved to: `/tmp/project/.amplifier/studio-outputs/conductor.png`"
+                ),
+                "mcp_server": "imagegen",
+                "mcp_tool": "generate_image",
+            },
+        },
+    )
+
+    assert event is not None
+    assert event.model_dump(mode="json")["artifacts"] == [
+        {
+            "path": "/tmp/project/.amplifier/studio-outputs/conductor.png",
+            "kind": "image",
+            "media_type": "image/png",
+        }
+    ]
+
+
+def test_read_tool_does_not_promote_backticked_paths_to_artifacts() -> None:
+    event = normalize(
+        "tool:post",
+        {
+            "tool_name": "read_file",
+            "result": {"content": "Read `/tmp/project/architecture.png`"},
+        },
+    )
+
+    assert event is not None
+    assert event.model_dump(mode="json")["artifacts"] == []
+
+
 def test_read_events_skips_bad_lines(store: SessionStore) -> None:
     store.session_dir("s1").mkdir(parents=True)
     (store.session_dir("s1") / EVENTS_FILENAME).write_text(

@@ -36,7 +36,11 @@ from amplifier_runtime.kernel.events import (
 )
 from amplifier_runtime.kernel.serve import serve, serve_loop
 from amplifier_runtime.kernel.steering import StepBoundaryBridge
-from amplifier_runtime.kernel.runtime import STUDIO_PRESENTATION_REMINDER
+from amplifier_runtime.kernel.runtime import (
+    STUDIO_PRESENTATION_REMINDER,
+    _studio_presentation_guidance,
+    _studio_visual_intent,
+)
 from amplifier_runtime.model.queues import NeedsYouQueue, QueuedMessage, SteeringQueue
 
 # Started-runtime + policy-hook helpers; the offline_env fixture comes from
@@ -51,8 +55,54 @@ async def test_studio_presentation_policy_requires_inline_artifacts_as_the_prima
 ):
     policy = " ".join(STUDIO_PRESENTATION_REMINDER.split())
     assert "amplifier-html" in policy
+    assert "amplifier-svg" in policy
+    assert "amplifier-dot" in policy
+    assert "The user never needs to name a fence" in policy
+    assert '"diagram the architecture"' in policy
+    assert '"create an image"' in policy
+    assert "choose exactly one primary surface" in policy
     assert "renders the actual experience in chat" in policy
     assert "Do not open Finder, Preview, or an external browser" in policy
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        ("Create an image of a conductor made of light", "generated-image"),
+        ("Make this architecture interactive so I can step through it", "amplifier-html"),
+        ("Diagram how Studio, the runtime, providers, and agents relate", "amplifier-dot"),
+        ("Show me a static timeline of the release", "amplifier-svg"),
+        ("Visualize it here", "infer-from-context"),
+        ("Explain why this test failed", None),
+    ],
+)
+async def test_studio_visual_intent_routes_ordinary_language(
+    prompt: str,
+    expected: str | None,
+) -> None:
+    assert _studio_visual_intent(prompt) == expected
+
+
+async def test_studio_presentation_guidance_names_the_live_imagen_tool() -> None:
+    coordinator = {"tools": {"mcp_imagegen_generate_image": object(), "bash": object()}}
+    guidance = _studio_presentation_guidance(
+        coordinator,
+        "Create an image of Amplifier coordinating a team",
+    )
+
+    assert "`mcp_imagegen_generate_image`" in guidance
+    assert "Runtime intent hint for this turn: `generated-image`" in guidance
+    assert "Let the image MCP choose its provider" in guidance
+
+
+async def test_studio_presentation_guidance_fails_closed_without_an_image_tool() -> None:
+    guidance = _studio_presentation_guidance(
+        {"tools": {"bash": object()}},
+        "Create an image of Amplifier coordinating a team",
+    )
+
+    assert "No image-generation MCP tool is mounted" in guidance
+    assert "do not silently replace it with SVG, HTML, DOT, ASCII art" in guidance
 
 
 class _PipeStdin:
