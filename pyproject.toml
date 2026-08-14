@@ -1,6 +1,6 @@
 [project]
 name = "amplifier-runtime"
-version = "0.1.1"
+version = "0.1.2"
 description = "Neutral session runtime for Amplifier clients"
 license = "MIT"
 readme = "README.md"

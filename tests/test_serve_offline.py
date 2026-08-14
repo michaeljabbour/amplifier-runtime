@@ -36,6 +36,7 @@ from amplifier_runtime.kernel.events import (
 )
 from amplifier_runtime.kernel.serve import serve, serve_loop
 from amplifier_runtime.kernel.steering import StepBoundaryBridge
+from amplifier_runtime.kernel.runtime import STUDIO_PRESENTATION_REMINDER
 from amplifier_runtime.model.queues import NeedsYouQueue, QueuedMessage, SteeringQueue
 
 # Started-runtime + policy-hook helpers; the offline_env fixture comes from
@@ -43,6 +44,15 @@ from amplifier_runtime.model.queues import NeedsYouQueue, QueuedMessage, Steerin
 from tests.test_runtime_offline import _register_policy_hook, _started_runtime
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_studio_presentation_policy_requires_inline_artifacts_as_the_primary_surface() -> (
+    None
+):
+    policy = " ".join(STUDIO_PRESENTATION_REMINDER.split())
+    assert "amplifier-html" in policy
+    assert "renders the actual experience in chat" in policy
+    assert "Do not open Finder, Preview, or an external browser" in policy
 
 
 class _PipeStdin:
@@ -241,6 +251,7 @@ class _FakeSteerRuntime:
         )
         self.mid_turn = asyncio.Event()
         self.resume = asyncio.Event()
+        self.submissions: list[str] = []
 
     def _steer_applied(self, steer: QueuedMessage) -> None:
         self.queue.put_nowait(
@@ -256,7 +267,7 @@ class _FakeSteerRuntime:
         )
 
     async def submit(self, text: str) -> str:
-        del text
+        self.submissions.append(text)
         # First step boundary (nothing queued yet), then park mid-turn.
         await self._bridge.handle_event("provider:request", {"session_id": self.session_id})
         self.mid_turn.set()
@@ -478,9 +489,12 @@ async def test_serve_steer_op_lands_in_runtime_queue_and_applies_at_step_boundar
     assert await server == 0
 
 
-async def test_serve_drains_leftover_steers_at_turn_end() -> None:
-    """A steer the turn never reached a boundary for is DISCARDED at turn end
-    (finish_turn_queues parity) — it must not inject into a later turn."""
+async def test_serve_promotes_leftover_steers_to_visible_follow_up_turns() -> None:
+    """A steer that misses the final model boundary remains user-authored input.
+
+    The host records the deferral and submits it as the next durable turn rather
+    than displaying the old, lossy ``queued steer discarded`` notice.
+    """
     runtime = _FakeSteerRuntime()
     stdin, out = _PipeStdin(), _Capture()
     server = asyncio.create_task(
@@ -496,7 +510,41 @@ async def test_serve_drains_leftover_steers_at_turn_end() -> None:
     runtime.resume.set()  # one boundary left: "first" applies, "second" cannot
     await _wait_until(lambda: out.find("turn.completed") is not None)
     assert _narration_texts(out) == ["Applying steer: first"]
-    assert runtime.steering.pending == ()  # leftover drained, not leaked
+    assert runtime.submissions == ["build the parser", "second"]
+    assert runtime.steering.pending == ()
+    deferred = out.find("steer.deferred")
+    assert deferred is not None
+    assert deferred["count"] == 1
+    assert deferred["reason"] == "final_boundary_passed"
+
+    stdin.close()
+    assert await server == 0
+
+
+async def test_serve_promotes_a_steer_observed_after_task_completion() -> None:
+    """The reader can observe a UI steer just after the task returns.
+
+    It starts a follow-up turn immediately instead of leaving a stale queue item
+    that could contaminate some later, unrelated prompt.
+    """
+    runtime = _FakeImageRuntime()
+    stdin, out = _PipeStdin(), _Capture()
+    server = asyncio.create_task(
+        serve_loop(runtime, source=cast("IO[str]", stdin), out=cast("IO[str]", out))  # type: ignore[arg-type]
+    )
+
+    stdin.feed({"op": "submit", "text": "build the parser"})
+    await _wait_until(lambda: out.find("turn.completed") is not None)
+    stdin.feed({"op": "steer", "text": "also make the output accessible"})
+    await _wait_until(lambda: len(runtime.submissions) == 2)
+
+    assert [item[0] for item in runtime.submissions] == [
+        "build the parser",
+        "also make the output accessible",
+    ]
+    deferred = out.find("steer.deferred")
+    assert deferred is not None
+    assert deferred["reason"] == "turn_already_completed"
 
     stdin.close()
     assert await server == 0

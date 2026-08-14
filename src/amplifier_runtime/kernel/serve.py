@@ -1189,6 +1189,8 @@ async def serve_loop(
 
     pump = asyncio.create_task(_pump())
     turn: asyncio.Task[str] | None = None
+    last_manage_project_plan = False
+    last_presentation_capabilities: tuple[str, ...] = ()
 
     # The control plane is materialized lazily (first control op / first op
     # carrying actor|lease|idem) so a legacy client's stream is untouched.
@@ -1363,20 +1365,21 @@ async def serve_loop(
                         },
                     )
                     continue
+                last_manage_project_plan = op.get("manage_project_plan") is True
+                requested_capabilities = op.get("presentation_capabilities", ())
+                last_presentation_capabilities = (
+                    tuple(str(item) for item in requested_capabilities if isinstance(item, str))
+                    if isinstance(requested_capabilities, (list, tuple))
+                    else ()
+                )
                 turn = asyncio.create_task(
                     _run_turn(
                         runtime,
                         out,
                         text,
                         attachments,
-                        manage_project_plan=op.get("manage_project_plan") is True,
-                        presentation_capabilities=tuple(
-                            str(item)
-                            for item in op.get("presentation_capabilities", ())
-                            if isinstance(item, str)
-                        )
-                        if isinstance(op.get("presentation_capabilities"), (list, tuple))
-                        else (),
+                        manage_project_plan=last_manage_project_plan,
+                        presentation_capabilities=last_presentation_capabilities,
                     )
                 )
             elif kind == "goal.set":
@@ -1387,7 +1390,15 @@ async def serve_loop(
                     # continuations; never launch an interleaved second turn.
                     await _emit_goal_state(runtime, out, _goal_args(op))
                     continue
-                turn = asyncio.create_task(_run_goal(runtime, out, _goal_args(op)))
+                turn = asyncio.create_task(
+                    _run_goal(
+                        runtime,
+                        out,
+                        _goal_args(op),
+                        manage_project_plan=last_manage_project_plan,
+                        presentation_capabilities=last_presentation_capabilities,
+                    )
+                )
             elif kind in {"goal.status", "goal.clear"}:
                 args = "" if kind == "goal.status" else "clear"
                 await _emit_goal_state(runtime, out, args)
@@ -1397,14 +1408,38 @@ async def serve_loop(
                 # (RealRuntime.steering): the StepBoundaryBridge consumes one
                 # steer per provider:request and the runtime itself narrates
                 # the application as a durable "Applying steer: …" block
-                # (kernel/runtime.py _steer_applied) — nothing new is emitted
-                # on stdout here. Bound/empty violations are dropped silently:
+                # (kernel/runtime.py _steer_applied). If the final boundary has
+                # already passed, a steer.deferred record explains why the
+                # exact text is becoming a follow-up turn. Bound/empty
+                # violations are dropped silently:
                 # a protocol client enforces the same SteeringQueue limits
                 # locally, so a ValueError here is a client already told.
-                try:
-                    runtime.steering.enqueue(str(op.get("text", "")))
-                except ValueError:
-                    pass
+                steer_text = str(op.get("text", ""))
+                if turn is None or turn.done():
+                    _emit_raw(
+                        out,
+                        {
+                            "schema_version": 1,
+                            "type": "steer.deferred",
+                            "session_id": runtime.session_id,
+                            "count": 1,
+                            "reason": "turn_already_completed",
+                        },
+                    )
+                    turn = asyncio.create_task(
+                        _run_turn(
+                            runtime,
+                            out,
+                            steer_text,
+                            manage_project_plan=last_manage_project_plan,
+                            presentation_capabilities=last_presentation_capabilities,
+                        )
+                    )
+                else:
+                    try:
+                        runtime.steering.enqueue(steer_text)
+                    except ValueError:
+                        pass
             elif kind == "approve":
                 ticket = op.get("ticket_id") or (
                     runtime.broker.head.ticket_id if runtime.broker.head else None
@@ -1546,43 +1581,72 @@ async def _run_turn(
     manage_project_plan: bool = False,
     presentation_capabilities: tuple[str, ...] = (),
 ) -> str:
-    """Execute one turn and emit its terminal record. Events stream via _pump."""
-    try:
+    """Execute a turn plus any late steers, then emit one terminal record.
+
+    Steers normally enter context at the next provider boundary.  If a steer
+    arrives after the turn's final boundary, preserving the user's instruction
+    is more important than pretending it applied to a turn that is already
+    complete.  Promote each leftover to an ordinary, durable follow-up submit.
+    """
+
+    async def submit_one(
+        prompt: str,
+        prompt_attachments: tuple[ImageAttachment, ...] = (),
+    ) -> str:
+        submit_kwargs: dict[str, Any] = {}
+        if manage_project_plan:
+            submit_kwargs["_manage_project_plan"] = True
+        if presentation_capabilities:
+            submit_kwargs["_presentation_capabilities"] = presentation_capabilities
+
         # Preserve the original call shape for text-only clients and test/runtime
         # adapters that predate attachments. RealRuntime receives the typed tuple
         # only when images were actually present on the wire.
-        if manage_project_plan or presentation_capabilities:
-            response = await runtime.submit(
-                text,
-                attachments,
-                _manage_project_plan=manage_project_plan,
-                _presentation_capabilities=presentation_capabilities,
+        if submit_kwargs:
+            return await runtime.submit(
+                prompt,
+                prompt_attachments,
+                **submit_kwargs,
             )
-        else:
-            response = (
-                await runtime.submit(text, attachments)
-                if attachments
-                else await runtime.submit(text)
-            )
-    except Exception as caught:  # noqa: BLE001 — a failed turn is a structured record, not a crash
-        _emit_raw(
-            out,
-            {
-                "schema_version": 1,
-                "type": "error",
-                "session_id": runtime.session_id,
-                "error": str(caught),
-                "error_type": type(caught).__name__,
-            },
+        return (
+            await runtime.submit(prompt, prompt_attachments)
+            if prompt_attachments
+            else await runtime.submit(prompt)
         )
-        return ""
-    finally:
-        # Turn-end queue duty (ui/app_support.finish_turn_queues parity):
-        # leftover steers are discarded — an unconsumed steer must never
-        # inject into a later turn the user never aimed it at (ADR-0007
-        # §Steering). The protocol client drains its own mirror queue and
-        # shows the discard notice; serve only keeps the runtime honest.
-        runtime.steering.drain_steers()
+
+    response = ""
+    pending: list[tuple[str, tuple[ImageAttachment, ...]]] = [(text, attachments)]
+    while pending:
+        prompt, prompt_attachments = pending.pop(0)
+        try:
+            response = await submit_one(prompt, prompt_attachments)
+        except Exception as caught:  # noqa: BLE001 — failure is a record, not a crash
+            _emit_raw(
+                out,
+                {
+                    "schema_version": 1,
+                    "type": "error",
+                    "session_id": runtime.session_id,
+                    "error": str(caught),
+                    "error_type": type(caught).__name__,
+                },
+            )
+            response = ""
+
+        leftovers = runtime.steering.drain_steers()
+        if leftovers:
+            _emit_raw(
+                out,
+                {
+                    "schema_version": 1,
+                    "type": "steer.deferred",
+                    "session_id": runtime.session_id,
+                    "count": len(leftovers),
+                    "reason": "final_boundary_passed",
+                },
+            )
+            pending.extend((steer.text, ()) for steer in leftovers)
+
     _emit_raw(
         out,
         {
@@ -1678,7 +1742,14 @@ async def _emit_goal_state(runtime: RealRuntime, out: IO[str], args: str) -> Non
     _emit_raw(out, record)
 
 
-async def _run_goal(runtime: RealRuntime, out: IO[str], args: str) -> str:
+async def _run_goal(
+    runtime: RealRuntime,
+    out: IO[str],
+    args: str,
+    *,
+    manage_project_plan: bool = False,
+    presentation_capabilities: tuple[str, ...] = (),
+) -> str:
     """Own one native goal run in the same turn slot as ``submit``.
 
     ``RealRuntime.manage_goal`` arms loop-streaming and sends the first prompt
@@ -1708,9 +1779,45 @@ async def _run_goal(runtime: RealRuntime, out: IO[str], args: str) -> str:
             action="error",
             detail=detail,
         )
-    finally:
-        # Goal execution enters through RealRuntime.submit just like an
-        # ordinary turn, so the same no-cross-turn steer invariant applies.
-        runtime.steering.drain_steers()
+    # A goal can also finish after its last safe steer boundary. Preserve any
+    # late human course correction as an ordinary follow-up before declaring
+    # the whole protocol operation complete.
+    leftovers = list(runtime.steering.drain_steers())
+    while leftovers:
+        _emit_raw(
+            out,
+            {
+                "schema_version": 1,
+                "type": "steer.deferred",
+                "session_id": runtime.session_id,
+                "count": len(leftovers),
+                "reason": "final_boundary_passed",
+            },
+        )
+        current = leftovers
+        leftovers = []
+        for steer in current:
+            submit_kwargs: dict[str, Any] = {}
+            if manage_project_plan:
+                submit_kwargs["_manage_project_plan"] = True
+            if presentation_capabilities:
+                submit_kwargs["_presentation_capabilities"] = presentation_capabilities
+            try:
+                if submit_kwargs:
+                    await runtime.submit(steer.text, (), **submit_kwargs)
+                else:
+                    await runtime.submit(steer.text)
+            except Exception as caught:  # noqa: BLE001 -- failure remains structured
+                _emit_raw(
+                    out,
+                    {
+                        "schema_version": 1,
+                        "type": "error",
+                        "session_id": runtime.session_id,
+                        "error": str(caught),
+                        "error_type": type(caught).__name__,
+                    },
+                )
+            leftovers.extend(runtime.steering.drain_steers())
     _emit_raw(out, record)
     return detail
