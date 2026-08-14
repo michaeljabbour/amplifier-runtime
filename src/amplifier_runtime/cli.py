@@ -48,6 +48,36 @@ def provider() -> None:
     """Inspect and configure model providers for runtime sessions."""
 
 
+@provider.command("list")
+@click.option("--format", "output_format", type=click.Choice(("text", "json")), default="text")
+def provider_list(output_format: str) -> None:
+    """List configured providers (the active entry is the primary route)."""
+    from .kernel import setup
+
+    providers = setup.configured_providers()
+    payload = [
+        {
+            "name": entry.name,
+            "module": entry.module_id,
+            "model": entry.model or "",
+            "active": entry.primary,
+            "priority": entry.priority,
+            "scope": entry.scope,
+        }
+        for entry in providers
+    ]
+    if output_format == "json":
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
+    if not payload:
+        click.echo("No providers configured.")
+        return
+    for entry in payload:
+        marker = "*" if entry["active"] else " "
+        model = f" ({entry['model']})" if entry["model"] else ""
+        click.echo(f"{marker} {entry['name']} · {entry['module']}{model}")
+
+
 @provider.command("status")
 @click.option("--format", "output_format", type=click.Choice(("text", "json")), default="text")
 def provider_status(output_format: str) -> None:
@@ -112,6 +142,68 @@ def provider_add(
     )
     target = setup.write_provider_config(bundle_admin.settings_paths(None, None), "global", entry)
     click.echo(f"configured provider {module_id} -> {target}")
+
+
+@main.group()
+def bundle() -> None:
+    """Discover and register bundles for runtime sessions."""
+
+
+@bundle.command("list")
+@click.option("--all", "all_bundles", is_flag=True)
+@click.option("--format", "output_format", type=click.Choice(("text", "json")), default="text")
+def bundle_list(all_bundles: bool, output_format: str) -> None:
+    """List available bundles and the active/default selection."""
+    from .kernel import bundle_admin
+    from .kernel.config import DEFAULT_BUNDLE
+
+    entries = bundle_admin.list_bundles(all_bundles=all_bundles)
+    active_name = bundle_admin.current_bundle()
+    payload = []
+    for entry in entries:
+        default_active = active_name is None and entry.name == DEFAULT_BUNDLE
+        payload.append(
+            {
+                "name": entry.name,
+                "active": entry.active or active_name == entry.name or default_active,
+                "location": entry.uri or ("(on disk)" if entry.source == "local" else ""),
+                "status": "default" if default_active else ("app" if entry.source == "app" else ""),
+                "source": entry.source,
+            }
+        )
+    if output_format == "json":
+        click.echo(json.dumps(payload, sort_keys=True))
+        return
+    if not payload:
+        click.echo("No bundles found.")
+        return
+    for entry in payload:
+        marker = "*" if entry["active"] else " "
+        status = f" [{entry['status']}]" if entry["status"] else ""
+        click.echo(f"{marker} {entry['name']}{status} · {entry['location']}")
+
+
+@bundle.command("add")
+@click.argument("uri")
+@click.option("--name", "name", default=None)
+@_scope_options
+def bundle_add(
+    uri: str, name: str | None, is_global: bool, is_project: bool, is_local: bool
+) -> None:
+    """Validate and register one bundle URI for discovery."""
+    from .kernel import bundle_admin
+
+    info = asyncio.run(bundle_admin.load_bundle_info(uri))
+    if info is None:
+        raise click.ClickException(f"could not load bundle from: {uri}")
+    resolved_name = (name or info.name).strip()
+    if not resolved_name:
+        raise click.UsageError("bundle name cannot be empty")
+    scope = _selected_scope(is_global, is_project, is_local)
+    target = bundle_admin.add_bundle(
+        bundle_admin.settings_paths(None, None), resolved_name, uri, scope
+    )
+    click.echo(f"registered {resolved_name} -> {uri} ({scope}: {target})")
 
 
 @main.group()

@@ -40,6 +40,82 @@ def test_provider_status_is_machine_readable(monkeypatch, tmp_path: Path) -> Non
     assert "remediation" in payload
 
 
+def test_provider_list_matches_studio_json_contract(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "amplifier-home"
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+    monkeypatch.chdir(tmp_path)
+    configured = CliRunner().invoke(
+        main,
+        ["provider", "add", "openai", "--api-key-stdin", "--yes", "--model", "gpt-test"],
+        input="secret-provider-key\n",
+    )
+
+    result = CliRunner().invoke(main, ["provider", "list", "--format", "json"])
+
+    assert configured.exit_code == 0, configured.output
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == [
+        {
+            "active": True,
+            "model": "gpt-test",
+            "module": "provider-openai",
+            "name": "openai",
+            "priority": 1,
+            "scope": "global",
+        }
+    ]
+
+
+def test_bundle_list_matches_studio_json_contract(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("AMPLIFIER_HOME", str(tmp_path / "amplifier-home"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "amplifier_runtime.kernel.bundle_admin.list_bundles",
+        lambda **_kwargs: (
+            __import__(
+                "amplifier_runtime.kernel.bundle_admin", fromlist=["BundleEntry"]
+            ).BundleEntry("anchors", False, "added", "git+https://example.test/anchors"),
+        ),
+    )
+    monkeypatch.setattr("amplifier_runtime.kernel.bundle_admin.current_bundle", lambda: "anchors")
+
+    result = CliRunner().invoke(main, ["bundle", "list", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == [
+        {
+            "active": True,
+            "location": "git+https://example.test/anchors",
+            "name": "anchors",
+            "source": "added",
+            "status": "",
+        }
+    ]
+
+
+def test_bundle_add_registers_validated_bundle(monkeypatch, tmp_path: Path) -> None:
+    from amplifier_runtime.kernel.bundle_admin import BundleInfo
+
+    home = tmp_path / "amplifier-home"
+    monkeypatch.setenv("AMPLIFIER_HOME", str(home))
+    monkeypatch.chdir(tmp_path)
+
+    async def loaded(_uri: str) -> BundleInfo:
+        return BundleInfo(name="demo")
+
+    monkeypatch.setattr("amplifier_runtime.kernel.bundle_admin.load_bundle_info", loaded)
+    result = CliRunner().invoke(
+        main,
+        ["bundle", "add", "--global", "--name", "studio-demo", "git+https://example.test/demo"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "registered studio-demo" in result.output
+    assert "studio-demo" in (home / "settings.yaml").read_text(encoding="utf-8")
+
+
 def test_provider_add_reads_secret_from_stdin_and_never_echoes_it(
     monkeypatch, tmp_path: Path
 ) -> None:
