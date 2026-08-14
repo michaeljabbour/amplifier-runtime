@@ -93,6 +93,20 @@ async def test_studio_presentation_guidance_names_the_live_imagen_tool() -> None
     assert "`mcp_imagegen_generate_image`" in guidance
     assert "Runtime intent hint for this turn: `generated-image`" in guidance
     assert "Let the image MCP choose its provider" in guidance
+    assert "request to render, not a request to research or delegate" in guidance
+    assert "Do not spawn an agent, browse, or inspect the repository" in guidance
+
+
+async def test_studio_presentation_guidance_keeps_simple_architecture_direct() -> None:
+    guidance = _studio_presentation_guidance(
+        {"tools": {"delegate": object(), "bash": object()}},
+        "Show me how Studio, the runtime, providers, tools, and agents connect",
+    )
+
+    assert "Runtime intent hint for this turn: `amplifier-dot`" in guidance
+    assert "at most one focused local read" in guidance
+    assert "Only delegate" in guidance
+    assert "when the user explicitly asks for research" in guidance
 
 
 async def test_studio_presentation_guidance_fails_closed_without_an_image_tool() -> None:

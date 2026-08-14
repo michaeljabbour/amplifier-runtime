@@ -283,7 +283,27 @@ def _studio_presentation_guidance(
         if intent
         else "No explicit visual intent was detected for this turn. Use a visual only when it materially helps."
     )
-    return f"{STUDIO_PRESENTATION_REMINDER}\n{image_guidance}\n{intent_guidance}"
+    directness_guidance = (
+        "A detected presentation intent is a request to render, not a request to research "
+        "or delegate. Render the visual directly from the conversation and already-mounted "
+        "context. Do not spawn an agent, browse, or inspect the repository merely to choose "
+        "a renderer or produce the visual. If a specific unknown fact is essential, perform "
+        "at most one focused local read and then render in this turn. Only delegate or do a "
+        "broader audit when the user explicitly asks for research, verification, repository "
+        "analysis, or multi-agent work."
+        if intent
+        else ""
+    )
+    return "\n".join(
+        part
+        for part in (
+            STUDIO_PRESENTATION_REMINDER,
+            image_guidance,
+            intent_guidance,
+            directness_guidance,
+        )
+        if part
+    )
 
 
 def _core_version() -> str:
