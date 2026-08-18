@@ -118,7 +118,7 @@ from .reminder_trust import (
 )
 from .turn_yield import TurnYieldTracker
 from .session_factory import InitializedSession, SessionRequest, create_initialized_session
-from .session_integrity import complete_orphaned_tool_results
+from .session_integrity import repair_resumed_transcript
 from .spawner import SessionSpawner
 from .steering import StepBoundaryBridge
 from .surface_hint import SurfaceHintInjector
@@ -924,8 +924,8 @@ class RealRuntime:
                 )
                 logger.info("Relocated session %s from %s", session_id, source)
             transcript, metadata = store.load(session_id)
-            transcript, tool_repairs = complete_orphaned_tool_results(transcript)
-            if tool_repairs:
+            transcript, transcript_repair = repair_resumed_transcript(transcript)
+            if transcript_repair:
                 # Persist before the first resumed model request. Provider-side
                 # request repair is necessarily ephemeral; without this write,
                 # a second request can lose the same synthetic results and be
@@ -941,8 +941,8 @@ class RealRuntime:
                 self.bridge.emit(
                     Notification(
                         message=(
-                            f"Resume repaired {len(tool_repairs)} interrupted tool "
-                            "result(s) before model execution. The tools may have "
+                            f"Resume repaired {transcript_repair.describe()} before "
+                            "model execution. Any interrupted tools may have "
                             "executed; inspect actual state before retrying."
                         ),
                         level="warning",
