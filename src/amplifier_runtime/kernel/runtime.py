@@ -129,7 +129,23 @@ TURN_ABORTED_MARKER = """<turn_aborted>
 The user intentionally interrupted the previous turn. Any in-flight tools may
 have partially completed; verify current state before retrying unfinished work.
 </turn_aborted>"""
-"""Model-visible, persisted boundary after an accepted Esc interrupt."""
+"""Model-visible, persisted boundary after an accepted Esc interrupt.
+
+Carried on a **user**-role message, and both halves of that are deliberate.
+
+Not ``assistant``: this is a fact about the environment, not something the
+model said. Persisted as assistant speech it becomes, from the model's point of
+view, its own last utterance -- a strong pattern to continue, so the next reply
+tends to parrot being interrupted. Each interrupt appends another, compounding.
+
+Not ``system`` either, despite that being the obvious alternative. For the
+Anthropic provider a system-role message is extracted OUT of the conversation
+and merged into the single top-level system block (see the compaction-notice
+comment in ``get_messages_for_request`` for the full mechanism), so one of
+these would rewrite the system block on every interrupt and bust its cache
+breakpoint. ``user`` keeps the marker in the conversation region, which is the
+same conclusion the compaction notice reached for the same reason.
+"""
 
 STUDIO_PROJECT_PLAN_REMINDER = """<system-reminder source="amplifier-studio-project-plan">
 For this request, use the mounted `todo` tool as the authoritative project plan
@@ -1688,6 +1704,17 @@ class RealRuntime:
                 raise RuntimeError("session context cannot accept image attachments")
             self._image_injector.prepare(text, attachments)
         self._interrupt_requested = False
+        # Clear the KERNEL-side token too, not just the local flag. Reaching a
+        # new turn with the previous turn's cancellation still set is a bug
+        # upstream, never a normal state, so say so rather than fixing it
+        # silently -- the symptom it produces (a turn that dies in 25 ms having
+        # never reached the model) is otherwise indistinguishable from the
+        # model returning nothing.
+        if self._clear_stale_cancellation():
+            logger.warning(
+                "A cancellation from a previous turn was still set at submit; cleared it. "
+                "Left in place this turn would have self-cancelled before reaching the model."
+            )
         self._executing = True
         response: Any = ""
         starting_diff = GitDiffSnapshot(False)
@@ -1910,7 +1937,7 @@ class RealRuntime:
             logger.warning("context cannot persist the turn-aborted marker")
             return False
         try:
-            result = add_message({"role": "assistant", "content": TURN_ABORTED_MARKER})
+            result = add_message({"role": "user", "content": TURN_ABORTED_MARKER})
             if asyncio.iscoroutine(result):
                 await result
             return True
@@ -2815,6 +2842,47 @@ class RealRuntime:
             directive,
             bundle=self.bundle_name,
         )
+
+    def _clear_stale_cancellation(self) -> bool:
+        """Clear a cancellation left set by a previous turn. Returns True if one was.
+
+        ``interrupt()`` requests cancellation on the coordinator's token, which
+        is kernel-owned state that OUTLIVES the turn it stopped. Resetting
+        ``self._interrupt_requested`` does not touch it. Nothing else cleared
+        it, so the next ``session.execute`` read a token that was still
+        cancelled and stopped within milliseconds of starting -- one interrupt
+        disabled the session for good, and only tearing it down and resuming
+        recovered it.
+
+        Observed in session ``eec9ae98``: 9 prompts cancelled 21-35 ms after
+        ``execution:start`` with ``turn_count: 0``, producing LLM-request gaps
+        of 1,064 s and 56,395 s while the user kept typing into a session that
+        could no longer answer.
+
+        Duck-typed like :meth:`interrupt` so test doubles without the full
+        token surface still work.
+        """
+        initialized = self._initialized
+        if initialized is None:
+            return False
+        # `.coordinator` is a property delegating to `session.coordinator`, so
+        # it can raise on a partial double -- and unlike `interrupt()`, this
+        # runs on the hot path of EVERY turn, where an AttributeError would
+        # take down submit() itself.
+        coordinator = getattr(initialized, "coordinator", None)
+        cancellation = getattr(coordinator, "cancellation", None)
+        if cancellation is None:
+            return False
+        was_cancelled = bool(getattr(cancellation, "is_cancelled", False))
+        reset = getattr(cancellation, "reset", None)
+        if not callable(reset):
+            return False
+        try:
+            reset()
+        except Exception:  # noqa: BLE001 — never block a turn on cleanup
+            logger.warning("cancellation reset failed", exc_info=True)
+            return False
+        return was_cancelled
 
     async def interrupt(self) -> bool:
         """Best-effort graceful cancellation at the next step boundary.
