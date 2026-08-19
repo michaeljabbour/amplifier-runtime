@@ -361,6 +361,22 @@ class PromptComplete(_Envelope):
     """
 
 
+class ArtifactWrite(_Envelope):
+    """A tool wrote a file to disk (``artifact:write``).
+
+    Emitted by ``amplifier-module-tool-filesystem`` from both ``write`` and
+    ``edit`` with ``{"path": ..., "bytes": ...}``. It was never bridged, so
+    files written during a turn were invisible in the client -- the TUI's own
+    canary logged ``unbridged event kind - artifact:write`` 15 times in session
+    ``eec9ae98``, while the user was asking where the files had gone.
+    """
+
+    kind: Literal["artifact_write"] = "artifact_write"
+    path: str = ""
+    bytes_written: int = 0
+    """Size of the write, from the emitter's ``bytes`` field."""
+
+
 class ExecutionStart(_Envelope):
     """Engine execution started (``execution:start``)."""
 
@@ -680,7 +696,8 @@ UIEvent = Annotated[
     | AgentResumed
     | Notification
     | ContextInjected
-    | ContextCompacted,
+    | ContextCompacted
+    | ArtifactWrite,
     Field(discriminator="kind"),
 ]
 """Discriminated union of every normalized UI event (on ``kind``)."""
@@ -1305,6 +1322,12 @@ def normalize(event_name: str, data: Mapping[str, Any] | None) -> UIEvent | None
             )
         case "prompt:complete":
             return PromptComplete(**env, response=_str(payload, "response"))
+        case "artifact:write":
+            return ArtifactWrite(
+                **env,
+                path=_str(payload, "path"),
+                bytes_written=_int(payload, "bytes", "bytes_written"),
+            )
         case "execution:start":
             return ExecutionStart(**env)
         case "execution:end":

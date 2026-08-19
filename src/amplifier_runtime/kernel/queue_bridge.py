@@ -50,6 +50,9 @@ CONSUMED_EVENTS: tuple[str, ...] = (
     "pipeline:edge_selected",
     "pipeline:checkpoint",
     "pipeline:complete",
+    # Files written by tools. Unbridged until now: the client could not show
+    # what a turn had actually produced on disk.
+    "artifact:write",
     # Turn / execution lifecycle
     "prompt:submit",
     "prompt:complete",
