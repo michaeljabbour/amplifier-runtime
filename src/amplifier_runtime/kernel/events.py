@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from itertools import count
@@ -46,9 +47,23 @@ from ..model.redaction import scrub_text
 
 _event_counter = count(1)
 
+# Per-process nonce. The counter alone is not enough: it is process-global, but
+# ``ui-events.jsonl`` is SESSION-scoped and appended to across processes. A
+# resume starts a fresh process, the counter restarts at 1, and the resumed
+# run's ids collide with the original run's -- observed in session ``eec9ae98``,
+# where both ``session_resume`` records carried ``ev3``, the same id the
+# original ``session_start`` had already used. Anything downstream that treats
+# ``event_id`` as a key (dedup, acknowledgement, correlation) then silently
+# conflates two unrelated events.
+#
+# A short random run tag makes ids unique across every process appending to one
+# log while staying readable and monotonic *within* a run. Nothing parses this
+# format; it is an opaque identity.
+_RUN_TAG = uuid.uuid4().hex[:6]
+
 
 def _mint_event_id() -> str:
-    return f"ev{next(_event_counter)}"
+    return f"ev{_RUN_TAG}-{next(_event_counter)}"
 
 
 class _Envelope(BaseModel):
