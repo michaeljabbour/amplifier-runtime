@@ -335,11 +335,30 @@ class PromptComplete(_Envelope):
     kind: Literal["prompt_complete"] = "prompt_complete"
     response: str = ""
     files_changed: int = 0
-    """Files whose diffstat changed during the turn (git snapshot delta)."""
+    """Files whose diffstat changed during the turn (git snapshot delta).
+
+    Meaningful only when ``yield_measured`` is True. Zero otherwise, and that
+    zero is an absence of measurement, not a measurement of absence.
+    """
     diffstat: str = ""
     """``+142/−38`` style line-delta label; empty when nothing changed."""
     tests_ok: bool | None = None
     """True/False when test commands ran this turn; None when they did not."""
+    yield_measured: bool = True
+    """False when the git snapshot could not be taken, so the yield is UNKNOWN.
+
+    ``capture_git_diff`` reports unavailable for a directory that is not a git
+    repository **and** for a repository with no commits yet -- ``git diff HEAD``
+    has no HEAD to diff against. Both are ordinary states for a project someone
+    is starting from scratch, which is exactly when a turn writes the most
+    files.
+
+    Without this flag the two cases are indistinguishable downstream: a turn
+    containing 94 ``write_file`` calls reported ``files_changed: 0`` in session
+    ``eec9ae98``, which reads as the positive claim "nothing changed" when the
+    truth was "nobody could tell". Consumers should render an absence rather
+    than a zero when this is False.
+    """
 
 
 class ExecutionStart(_Envelope):

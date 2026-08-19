@@ -2021,6 +2021,20 @@ class RealRuntime:
         """Synthesize the enriched ``PromptComplete`` (files/diffstat/tests)."""
         ending_diff = await self._capture_diff()
         delta = ending_diff.delta_from(starting_diff)
+        # `delta is None` means the snapshot could not be taken -- not a git
+        # repository, or one with no commits yet, so `git diff HEAD` has no HEAD.
+        # Both are ordinary states for a project being started from scratch,
+        # which is precisely when a turn writes the most files. Reporting the
+        # resulting 0 as if it were a measurement turns an absence of evidence
+        # into evidence of absence: a turn with 94 `write_file` calls announced
+        # "0 files changed" in session `eec9ae98`.
+        measured = delta is not None
+        if not measured:
+            logger.debug(
+                "turn yield unmeasured: no git snapshot for %s "
+                "(not a repository, or no commits yet)",
+                self._turn_cwd(),
+            )
         self.bridge.emit(
             PromptComplete(
                 session_id=self._initialized.session_id if self._initialized else "",
@@ -2028,6 +2042,7 @@ class RealRuntime:
                 files_changed=delta.files if delta else 0,
                 diffstat=delta.diff_label if delta and delta.files else "",
                 tests_ok=self.turn_yield.tests_ok,
+                yield_measured=measured,
             )
         )
 
