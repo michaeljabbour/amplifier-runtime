@@ -30,6 +30,10 @@ Guarantees:
 
 from __future__ import annotations
 
+import base64
+import contextlib
+import copy
+import hashlib
 import json
 import logging
 import os
@@ -47,6 +51,141 @@ from .events import UIEvent
 logger = logging.getLogger(__name__)
 
 TRANSCRIPT_FILENAME = "transcript.jsonl"
+BLOBS_DIRNAME = "blobs"
+
+_MEDIA_TYPE_SUFFIX = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+}
+
+
+def _write_bytes_atomic(path: Path, payload: bytes) -> None:
+    """Write *payload* via a temp file + replace, so readers never see a partial blob."""
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".blob-")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+def _blob_suffix(media_type: str) -> str:
+    return _MEDIA_TYPE_SUFFIX.get(media_type, ".bin")
+
+
+def _walk_image_sources(message: Any) -> Iterator[dict[str, Any]]:
+    """Yield every ``source`` mapping of every image block in *message*."""
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return
+    for block in content:
+        if not isinstance(block, dict) or block.get("type") != "image":
+            continue
+        source = block.get("source")
+        if isinstance(source, dict):
+            yield source
+
+
+def _externalize_images(message: Any, blobs_dir: Path) -> Any:
+    """Move inline base64 image payloads out to content-addressed blobs.
+
+    One pasted screenshot was measured at **3,113,952 base64 characters** inside
+    a single ``transcript.jsonl`` line. That file is rewritten by
+    ``IncrementalSaver`` on every ``tool:post`` and kept in duplicate by
+    ``_write_with_backup``, so the cost is megabytes of re-serialization and
+    fsync per tool call, forever, for an image the provider itself accounted at a
+    few hundred tokens.
+
+    Content-addressed, so the same image pasted twice costs one copy. Returns a
+    NEW message; the in-memory one is never mutated.
+
+    **A blob that cannot be written falls back to inline base64.** Degraded
+    storage is recoverable; a silently dropped attachment is not -- and rewind
+    reads attachments back out of stored history.
+    """
+    sources = list(_walk_image_sources(message))
+    if not any(src.get("type") == "base64" for src in sources):
+        return message
+
+    rewritten = copy.deepcopy(message)
+    for source in _walk_image_sources(rewritten):
+        if source.get("type") != "base64":
+            continue
+        raw = source.get("data")
+        if not isinstance(raw, str) or not raw:
+            continue
+        try:
+            payload = base64.b64decode(raw, validate=True)
+        except (ValueError, TypeError):
+            continue  # not decodable -- leave it exactly as it is
+        media_type = str(source.get("media_type") or "application/octet-stream")
+        digest = hashlib.sha256(payload).hexdigest()
+        blob_path = blobs_dir / f"sha256-{digest}{_blob_suffix(media_type)}"
+        try:
+            blobs_dir.mkdir(parents=True, exist_ok=True)
+            if not blob_path.exists():
+                # Write the blob BEFORE the transcript that references it, so a
+                # crash between the two leaves an orphan blob rather than a
+                # dangling reference.
+                _write_bytes_atomic(blob_path, payload)
+        except OSError:
+            logger.warning(
+                "Could not externalize a %d-byte image; keeping it inline",
+                len(payload),
+                exc_info=True,
+            )
+            continue
+        source.clear()
+        source.update({"type": "ref", "id": f"sha256:{digest}", "media_type": media_type})
+    return rewritten
+
+
+def _rehydrate_images(message: Any, blobs_dir: Path) -> Any:
+    """Restore externalized image blobs to the inline shape callers expect.
+
+    Everything above the persistence sink -- the clipboard injector, the
+    orchestrator, the token estimator, rewind, the provider -- reads the inline
+    form. Rehydration keeps this a storage change rather than a behaviour one.
+
+    A missing blob leaves the reference in place rather than raising: a session
+    copied without its ``blobs/`` directory should degrade, not fail to load.
+    """
+    sources = list(_walk_image_sources(message))
+    if not any(src.get("type") == "ref" for src in sources):
+        return message
+
+    for source in sources:
+        if source.get("type") != "ref":
+            continue
+        identifier = str(source.get("id") or "")
+        if not identifier.startswith("sha256:"):
+            continue
+        digest = identifier.split(":", 1)[1]
+        media_type = str(source.get("media_type") or "application/octet-stream")
+        blob_path = blobs_dir / f"sha256-{digest}{_blob_suffix(media_type)}"
+        try:
+            payload = blob_path.read_bytes()
+        except OSError:
+            logger.warning("Image blob %s is unreadable", blob_path, exc_info=True)
+            continue
+        source.clear()
+        source.update(
+            {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(payload).decode("ascii"),
+            }
+        )
+    return message
+
+
 METADATA_FILENAME = "metadata.json"
 EVENTS_FILENAME = "ui-events.jsonl"
 LEGACY_EVENTS_FILENAME = "events.jsonl"
@@ -311,9 +450,15 @@ class SessionStore:
             # block kinds are covered — the transcript path previously
             # only JSON-sanitized, never redacted. Same rules as export,
             # copy and the metadata path (model.redaction).
+            # Externalize image payloads BEFORE serializing. One pasted
+            # screenshot measured 3,113,952 base64 characters inside a single
+            # line here, and IncrementalSaver rewrites this file on every
+            # tool:post with a .backup copy alongside.
             lines.append(
                 json.dumps(
-                    scrub_value(_sanitize_message(message)),
+                    scrub_value(
+                        _externalize_images(_sanitize_message(message), session_dir / BLOBS_DIRNAME)
+                    ),
                     ensure_ascii=False,
                     default=_json_default,
                 )
@@ -386,8 +531,13 @@ class SessionStore:
             if not path.exists():
                 continue
             try:
+                # Rehydrate externalized images so everything above this sink
+                # sees the inline shape it has always seen. A transcript written
+                # before externalization contains no refs, so this is a no-op
+                # for it -- migration is "do nothing".
+                blobs_dir = session_dir / BLOBS_DIRNAME
                 transcript = [
-                    json.loads(line)
+                    _rehydrate_images(json.loads(line), blobs_dir)
                     for line in path.read_text(encoding="utf-8").splitlines()
                     if line.strip()
                 ]
