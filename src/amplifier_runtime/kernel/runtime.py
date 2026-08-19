@@ -32,6 +32,7 @@ from ..model.terminal import TerminalSurface
 from ..model.trust import CapabilityClass, DenialLog, TrustDecision
 from .approval import ApprovalBroker
 from .attention_push import NtfyAttentionDestination, resolve_ntfy_attention_config
+from .attention_store import AttentionStore
 from .bundle_admin import list_bundles as list_known_bundles
 from .bundle_admin import read_scope, settings_paths
 from .bundle_summon import (
@@ -1715,6 +1716,12 @@ class RealRuntime:
                 "A cancellation from a previous turn was still set at submit; cleared it. "
                 "Left in place this turn would have self-cancelled before reaching the model."
             )
+        # The user is speaking, so any "needs you" record is answered or moot.
+        # Only the out-of-band reply path ever cleared these; answering inline
+        # left them pending forever.
+        resolved_attention = await self._resolve_pending_attention()
+        if resolved_attention is not None:
+            logger.debug("resolved pending attention %s on submit", resolved_attention)
         self._executing = True
         response: Any = ""
         starting_diff = GitDiffSnapshot(False)
@@ -2842,6 +2849,56 @@ class RealRuntime:
             directive,
             bundle=self.bundle_name,
         )
+
+    async def _resolve_pending_attention(self) -> str | None:
+        """Clear a "needs you" record once the user has actually spoken.
+
+        An attention record means the session is waiting on the user. Every
+        path that answers OUT of band clears it -- ``ambient/reply.py`` calls
+        through :class:`AttentionStore` so an ntfy reply resolves the state
+        cross-process. **Answering inline, in the TUI, cleared nothing**: there
+        was no caller on the submit path at all, so the durable record stayed
+        ``acknowledged: false`` forever.
+
+        Observed in session ``eec9ae98``: four decisions raised at 17:11:48,
+        answered inline at 20:52:05, written up by the agent to a decisions file
+        by 21:06 -- and all four still sitting in ``attention.json`` as
+        unacknowledged under ``reason: "awaiting_clarification"`` at the end of
+        the session.
+
+        Submitting a prompt is the strongest available evidence that the wait is
+        over: whatever the user typed, they are no longer blocked on that
+        question. Best-effort throughout -- a failure to clear a notification
+        must never stop a turn.
+
+        Returns the acknowledged event id, or ``None`` if there was nothing
+        pending.
+        """
+        session_dir = self.session_dir()
+        initialized = self._initialized
+        if session_dir is None or initialized is None:
+            return None
+        try:
+            outcome = AttentionStore(session_dir).acknowledge(initialized.session_id)
+        except Exception:  # noqa: BLE001 -- a notification must never block a turn
+            logger.debug("attention acknowledgement on submit failed", exc_info=True)
+            return None
+        if outcome is None:
+            return None
+        _by_id, _current, acknowledged = outcome
+        if acknowledged is None:
+            return None
+        # Mirror onto the hooks bus so out-of-band destinations (ntfy) clear the
+        # same notification the user just answered in the TUI.
+        await self.publish_attention_acknowledged(
+            {
+                "session_id": acknowledged.session_id,
+                "event_id": acknowledged.event_id,
+                "reason": acknowledged.reason,
+                "acknowledged": True,
+            }
+        )
+        return acknowledged.event_id
 
     def _clear_stale_cancellation(self) -> bool:
         """Clear a cancellation left set by a previous turn. Returns True if one was.
