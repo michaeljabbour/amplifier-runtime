@@ -52,7 +52,8 @@ Wire (one JSON object per line):
                 {"op": "handoff.claim",  "handoff": "ho-...", "actor": {...}}
                 {"op": "handoff.list"}
                 {"op": "audit.query",    "limit": 50}
-                {"op": "history.replay", "since": 0}     (durable event history for a reattach)
+                {"op": "history.replay", "since": 0}     (durable event history for a reattach;
+                                                              legacy transcript fallback when no UI ledger exists)
                  any op may carry "actor" (attribution), "lease" (write token) and
                  "idem" (idempotency key); write ops are submit/steer/approve/
                  decision/interrupt/goal.set/goal.clear.
@@ -90,7 +91,9 @@ Wire (one JSON object per line):
                 {"schema_version": 1, "type": "handoff.created" | "handoff.claimed",
                  "handoff": {"handoff_id": "ho-...", "ref": "amplifier-session:<sid>#ho-...", ...}}
                 {"schema_version": 1, "type": "history.begin" | "history.end"}
-                 (replayed events are ordinary runtime.event records flagged "replay": true)
+                 (replayed UI events are ordinary runtime.event records flagged "replay": true;
+                  a legacy session with no UI-event ledger yields distinct
+                  transcript.message records rather than fabricated UI events)
 
 The ``runtime.event`` envelope is byte-identical to the ``run`` JSONL contract
 (``JsonlRecords``); ``approval.required`` is the one record ``run`` cannot emit,
@@ -815,8 +818,15 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
     events are re-emitted as ordinary ``runtime.event`` records flagged
     ``"replay": true`` and sequenced by their LEDGER index, so a client can
     resume from ``since`` without double-counting cost or confusing them with
-    the live stream. A session with no ledger yet replays an empty history
-    rather than failing (best-effort, like history.query).
+    the live stream.
+
+    A resumed session can predate the UIEvent ledger while still carrying a
+    complete ``transcript.jsonl``. In that case ``RealRuntime`` exposes a
+    deliberately simplified ``restored_history`` of user/assistant prose.
+    Replay it as *distinct* ``transcript.message`` records: clients recover
+    the visible conversation without pretending transcript messages are
+    UIEvents or inventing plans, tool state, outputs, or telemetry that were
+    never persisted. The UI ledger remains the preferred, richer source.
     """
     session_id = str(getattr(runtime, "session_id", ""))
     try:
@@ -855,11 +865,38 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
     # without one it is the durable tail.
     effective_since = min(since, ledger_cursor)
     cursor = int(events[-1]["sequence"]) if events else effective_since
+    legacy_messages: list[dict[str, Any]] = []
+    if ledger_cursor == 0 and effective_since == 0:
+        restored = getattr(runtime, "restored_history", ())
+        if isinstance(restored, (list, tuple)):
+            pairs = [
+                (str(role), str(text))
+                for role, text in restored
+                if str(role) in {"user", "assistant"} and str(text).strip()
+            ]
+            if limit > 0:
+                pairs = pairs[:limit]
+            legacy_messages = [
+                {
+                    "schema_version": 1,
+                    "type": "transcript.message",
+                    "replay": True,
+                    "session_id": session_id,
+                    "message_id": f"{session_id}:transcript:{index}",
+                    "index": index,
+                    "role": role,
+                    "text": text,
+                }
+                for index, (role, text) in enumerate(pairs, start=1)
+            ]
+
+    source = "transcript" if legacy_messages else "ui-events"
     begin = {
         "schema_version": 1,
         "type": "history.begin",
         "session_id": session_id,
         "since": effective_since,
+        "source": source,
     }
     end = {
         "schema_version": 1,
@@ -867,8 +904,11 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
         "session_id": session_id,
         "count": len(events),
         "cursor": cursor,
+        "source": source,
     }
-    return [begin, *events, end]
+    if legacy_messages:
+        end["transcript_count"] = len(legacy_messages)
+    return [begin, *events, *legacy_messages, end]
 
 
 DEFAULT_HISTORY_QUERY_LIMIT = 10

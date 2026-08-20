@@ -121,6 +121,7 @@ class _ControlRuntime:
         self.queue: asyncio.Queue[Any] = asyncio.Queue()
         self.broker: Any = _NoBroker()
         self.steering = SteeringQueue()
+        self.restored_history: tuple[tuple[str, str], ...] = ()
         self.submits: list[str] = []
         self.interrupts = 0
         self.goal_calls: list[str] = []
@@ -519,11 +520,68 @@ async def test_reattach_replays_the_same_history_without_touching_it(
         "session_id": runtime.session_id,
         "count": 2,
         "cursor": 2,
+        "source": "ui-events",
     }
     # The cursor lets a client resume where it stopped.
     assert second.out.all("history.begin")[1]["since"] == 1
     assert second.out.all("history.end")[1]["count"] == 1
     assert ledger.read_bytes() == before, "replay must never write the transcript"
+
+
+async def test_legacy_resume_replays_visible_transcript_without_fabricating_ui_events(
+    runtime: _ControlRuntime,
+) -> None:
+    """Pre-ledger sessions recover readable conversation through a distinct
+    transcript record instead of inventing normalized UI events."""
+    runtime.restored_history = (
+        ("user", "Review the interop dossier"),
+        ("assistant", "The core provocation is seamless session mobility."),
+    )
+    conn = _Connection(runtime)
+    conn.send(op="history.replay", since=0)
+    await conn.wait(lambda: conn.out.find("history.end") is not None)
+
+    assert conn.out.find("history.begin") == {
+        "schema_version": 1,
+        "type": "history.begin",
+        "session_id": runtime.session_id,
+        "since": 0,
+        "source": "transcript",
+    }
+    assert conn.out.all("runtime.event") == []
+    assert conn.out.all("transcript.message") == [
+        {
+            "schema_version": 1,
+            "type": "transcript.message",
+            "replay": True,
+            "session_id": runtime.session_id,
+            "message_id": f"{runtime.session_id}:transcript:1",
+            "index": 1,
+            "role": "user",
+            "text": "Review the interop dossier",
+        },
+        {
+            "schema_version": 1,
+            "type": "transcript.message",
+            "replay": True,
+            "session_id": runtime.session_id,
+            "message_id": f"{runtime.session_id}:transcript:2",
+            "index": 2,
+            "role": "assistant",
+            "text": "The core provocation is seamless session mobility.",
+        },
+    ]
+    assert conn.out.find("history.end") == {
+        "schema_version": 1,
+        "type": "history.end",
+        "session_id": runtime.session_id,
+        "count": 0,
+        "cursor": 0,
+        "source": "transcript",
+        "transcript_count": 2,
+    }
+    assert not (_session_dir(runtime) / "ui-events.jsonl").exists()
+    assert await conn.drop() == 0
 
 
 async def test_replay_clamps_a_cursor_beyond_the_durable_tail(
