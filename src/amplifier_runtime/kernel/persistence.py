@@ -379,6 +379,17 @@ class SessionStore:
             )
         self.base_dir = base_dir
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.sessions_listable = True
+        """Set by :meth:`list_sessions` to whether it could actually look.
+
+        ``list_sessions`` returns ``[]`` for "this project has no sessions"
+        AND for "I could not read the sessions directory" -- the same value
+        for a fact and for the absence of one. Because ``__init__`` above
+        creates ``base_dir``, a later disappearance is never the normal empty
+        case: the directory was removed, unmounted, or became unreadable
+        underneath us. Callers that act on emptiness (listings, resume
+        lookup) read this to tell the two apart.
+        """
         self.transcript_recovery_failed = False
         """Set by :meth:`_load_transcript` when a resumed session's
         transcript file(s) existed but were ALL unreadable — the history
@@ -828,11 +839,27 @@ class SessionStore:
     # -- listing / lookup ----------------------------------------------------
 
     def list_sessions(self, *, top_level_only: bool = True) -> list[str]:
-        """Session ids, newest first (by directory mtime)."""
+        """Session ids, newest first (by directory mtime).
+
+        Sets :attr:`sessions_listable` to whether the directory could be read.
+        Each call reports only what it just saw, so a transient outage does
+        not latch a store into a failed state.
+        """
+        self.sessions_listable = True
         if not self.base_dir.exists():
+            # __init__ created this directory, so its absence is an anomaly
+            # rather than an empty project -- report it as one.
+            self.sessions_listable = False
             return []
         entries: list[tuple[str, float]] = []
-        for session_dir in self.base_dir.iterdir():
+        try:
+            children = list(self.base_dir.iterdir())
+        except OSError:
+            # Present but unreadable: permissions revoked, volume unmounted
+            # mid-scan. Same lie as absence, different cause.
+            self.sessions_listable = False
+            return []
+        for session_dir in children:
             if not session_dir.is_dir() or session_dir.name.startswith("."):
                 continue
             if top_level_only and not is_top_level_session(session_dir.name):
@@ -858,6 +885,13 @@ class SessionStore:
             if sid.startswith(partial_id)
         ]
         if not matches:
+            if not self.sessions_listable:
+                raise FileNotFoundError(
+                    f"Could not read the session store at {self.base_dir}, so "
+                    f"'{partial_id}' could not be looked up. The directory is "
+                    f"missing or unreadable -- this does not mean the session "
+                    f"is gone."
+                )
             raise FileNotFoundError(f"No session found matching '{partial_id}'")
         if len(matches) > 1:
             raise AmbiguousSessionError(partial_id, matches)

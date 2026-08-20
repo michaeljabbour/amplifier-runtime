@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 from pathlib import Path
 from typing import Any
@@ -914,3 +915,88 @@ def test_runtime_relocates_the_complete_session_after_project_rename(
     destination = destination_store.session_dir(session_id)
     assert (destination / "audit.jsonl").is_file()
     assert not (destination / "attach.json").exists()
+
+
+# --------------------------------------------------------------------------
+# list_sessions: "there are none" vs "I cannot tell"
+# --------------------------------------------------------------------------
+
+
+def test_empty_store_lists_nothing_and_says_it_could_look(store: SessionStore) -> None:
+    """The ordinary case: genuinely zero sessions, and we know it."""
+    assert store.list_sessions() == []
+    assert store.sessions_listable is True
+
+
+def test_a_vanished_sessions_dir_is_not_reported_as_zero_sessions(
+    store: SessionStore,
+) -> None:
+    """``base_dir`` is created in ``__init__``, so its absence is never normal.
+
+    ``mkdir(parents=True, exist_ok=True)`` runs at construction, which means a
+    later ``not base_dir.exists()`` cannot mean "no sessions yet" -- the
+    directory was removed, unmounted, or became unreachable underneath us.
+    Returning ``[]`` reports that as "this project has no sessions", which is
+    the same shape as the real answer and indistinguishable from it.
+    """
+    store.save("s1", [{"role": "user", "content": "hi"}], {"session_id": "s1"})
+    assert store.list_sessions() == ["s1"]
+
+    shutil.rmtree(store.base_dir)
+
+    assert store.list_sessions() == []
+    assert store.sessions_listable is False, (
+        "a removed sessions directory was reported as an empty one"
+    )
+
+
+def test_an_unreadable_sessions_dir_is_not_reported_as_zero_sessions(
+    store: SessionStore,
+) -> None:
+    """The directory can also be present and unreadable -- same lie, different cause."""
+    store.save("s1", [{"role": "user", "content": "hi"}], {"session_id": "s1"})
+    store.base_dir.chmod(0o000)
+    try:
+        listed = store.list_sessions()
+        readable = store.sessions_listable
+    finally:
+        store.base_dir.chmod(0o700)
+
+    if listed == [] and not readable:
+        return  # permissions enforced: reported honestly
+    # Running as root (CI containers often do) makes 0o000 unenforceable.
+    assert listed == ["s1"], "unreadable dir neither blocked nor listed correctly"
+
+
+def test_the_flag_re_arms_once_the_directory_is_back(store: SessionStore) -> None:
+    """A transient outage must not latch. Each call reports what it just saw."""
+    store.save("s1", [{"role": "user", "content": "hi"}], {"session_id": "s1"})
+    gone = store.base_dir.parent / "moved-aside"
+    store.base_dir.rename(gone)
+
+    assert store.list_sessions() == []
+    assert store.sessions_listable is False
+
+    gone.rename(store.base_dir)
+
+    assert store.list_sessions() == ["s1"]
+    assert store.sessions_listable is True
+
+
+def test_find_session_distinguishes_missing_from_unreadable(store: SessionStore) -> None:
+    """The lookup path inherits the same distinction.
+
+    Without it, "that session id does not exist" and "I could not read the
+    directory to check" produce the identical error, and a resume against an
+    unmounted home would be reported to the user as a bad session id.
+    """
+    store.save("abc123", [{"role": "user", "content": "hi"}], {"session_id": "abc123"})
+    shutil.rmtree(store.base_dir)
+
+    with pytest.raises(Exception) as excinfo:
+        store.find_session("abc123")
+
+    assert store.sessions_listable is False
+    assert (
+        "unreadable" in str(excinfo.value).lower() or "could not" in str(excinfo.value).lower()
+    ), f"error text blames the session id rather than the unreadable store: {excinfo.value}"
