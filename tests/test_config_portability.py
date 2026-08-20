@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from amplifier_runtime.kernel.config import _foundation_load_source, discover_bundle
+from amplifier_runtime.kernel.config import (
+    _foundation_load_source,
+    discover_bundle,
+    packaged_bundles_dir,
+)
 
 
 def test_bundle_discovery_preserves_the_existing_local_path_api(tmp_path: Path) -> None:
@@ -25,3 +29,11 @@ def test_only_the_windows_foundation_load_boundary_receives_a_file_uri() -> None
     assert _foundation_load_source("git+https://example.test/bundle@abc", platform="nt") == (
         "git+https://example.test/bundle@abc"
     )
+
+
+def test_tui_contract_reports_capability_availability_at_session_scope() -> None:
+    text = (packaged_bundles_dir() / "tui.md").read_text(encoding="utf-8")
+
+    assert "Treat capability availability as a live, session-scoped fact." in text
+    assert "not mounted in this session" in text
+    assert "do not claim that the capability is uninstalled" in text
