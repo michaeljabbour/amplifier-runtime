@@ -744,6 +744,11 @@ async def install_provider_module(
 
     importlib.invalidate_caches()
     reset_provider_info_cache()
+    # ``uv pip install -e`` records the source in a .pth file, but Python only
+    # reads new .pth files at the next interpreter startup. The installer must
+    # verify and use the provider in this same process, so expose the resolved
+    # source immediately as well.
+    _graft_sys_path(target)
     if _load_provider_class(module_id) is None:
         return False, "installed, but the module still fails to import"
     return True, "installed"
