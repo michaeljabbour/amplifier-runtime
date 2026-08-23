@@ -2172,6 +2172,18 @@ class RealRuntime:
             return session_ops.ModelListing(provider="", current="")
         return await session_ops.list_models(coord)
 
+    async def test_providers(self, name: str = "") -> tuple[session_ops.ProviderCheck, ...]:
+        coord = self._coordinator()
+        if coord is None:
+            return ()
+        return await session_ops.test_providers(coord, name)
+
+    async def provider_models(self, name: str = "") -> session_ops.ProviderModels:
+        coord = self._coordinator()
+        if coord is None:
+            return session_ops.ProviderModels(name=name, error="session still starting")
+        return await session_ops.provider_models(coord, name)
+
     async def set_model(self, model: str) -> tuple[bool, str]:
         coord = self._coordinator()
         if coord is None:
