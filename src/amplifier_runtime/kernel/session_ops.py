@@ -17,7 +17,9 @@ thread. Functions never raise into the UI: a missing mechanism returns a
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,6 +46,35 @@ class ModelListing:
     provider: str
     current: str
     available: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProviderModelInfo:
+    """One model advertised by a live, mounted provider."""
+
+    id: str
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ProviderCheck:
+    """Bounded connectivity result for one live, mounted provider."""
+
+    name: str
+    ok: bool
+    elapsed_s: float
+    detail: str
+
+
+@dataclass(frozen=True)
+class ProviderModels:
+    """Model catalog result for one live, mounted provider."""
+
+    name: str
+    models: tuple[ProviderModelInfo, ...] = ()
+    error: str = ""
 
 
 @dataclass(frozen=True)
@@ -138,6 +169,138 @@ async def list_models(coordinator: Any) -> ModelListing:
         except Exception:  # noqa: BLE001 — a broken lister must not kill the UI
             available = ()
     return ModelListing(provider=name, current=current, available=available)
+
+
+def _diagnostic_targets(coordinator: Any, name: str) -> tuple[dict[str, Any], str]:
+    """Resolve all mounted providers or one explicitly named provider."""
+    providers = _providers(coordinator)
+    wanted = name.strip()
+    if not wanted:
+        return providers, ""
+    if wanted in providers:
+        return {wanted: providers[wanted]}, ""
+    available = ", ".join(sorted(providers)) if providers else "(none)"
+    return {}, f"provider {wanted!r} is not mounted · available: {available}"
+
+
+async def _invoke_models(provider: Any, timeout: float) -> list[Any]:
+    """Call a provider's model lister without blocking the runtime loop."""
+    lister = getattr(provider, "list_models", None)
+    if not callable(lister):
+        return []
+
+    async def _invoke() -> Any:
+        if inspect.iscoroutinefunction(lister):
+            result = lister()
+        else:
+            result = await asyncio.to_thread(lister)
+        return await result if inspect.isawaitable(result) else result
+
+    return list(await asyncio.wait_for(_invoke(), timeout=timeout) or ())
+
+
+def _provider_error(provider: Any, error: Exception) -> str:
+    """Return a one-line provider error with configured secrets scrubbed."""
+    from .preflight_verify import scrub_provider_error
+
+    config = getattr(provider, "config", None)
+    safe_config = config if isinstance(config, dict) else {}
+    return scrub_provider_error(f"{type(error).__name__}: {error}", safe_config)
+
+
+async def test_providers(
+    coordinator: Any, name: str = "", *, timeout: float = 15.0
+) -> tuple[ProviderCheck, ...]:
+    """Test one or every mounted provider through its live ``list_models`` seam.
+
+    Each provider is bounded independently and all targets run concurrently.
+    Mounted instances are never closed or replaced; they continue serving the
+    session after this read-only diagnostic.
+    """
+    targets, error = _diagnostic_targets(coordinator, name)
+    if error:
+        return (ProviderCheck(name=name.strip(), ok=False, elapsed_s=0.0, detail=error),)
+    if not targets:
+        return ()
+
+    async def _one(provider_name: str, provider: Any) -> ProviderCheck:
+        started = time.monotonic()
+        try:
+            models = await _invoke_models(provider, timeout)
+        except TimeoutError:
+            elapsed = time.monotonic() - started
+            return ProviderCheck(
+                name=provider_name,
+                ok=False,
+                elapsed_s=elapsed,
+                detail=f"timed out after {timeout:g}s",
+            )
+        except Exception as exc:  # noqa: BLE001 - one provider must not abort the batch
+            elapsed = time.monotonic() - started
+            return ProviderCheck(
+                name=provider_name,
+                ok=False,
+                elapsed_s=elapsed,
+                detail=_provider_error(provider, exc),
+            )
+        elapsed = time.monotonic() - started
+        count = len(models)
+        return ProviderCheck(
+            name=provider_name,
+            ok=True,
+            elapsed_s=elapsed,
+            detail=f"{count} model{'s' if count != 1 else ''} available",
+        )
+
+    return tuple(
+        await asyncio.gather(
+            *(_one(target_name, targets[target_name]) for target_name in sorted(targets))
+        )
+    )
+
+
+def _model_info(model: Any) -> ProviderModelInfo | None:
+    ident = (
+        getattr(model, "id", None)
+        or getattr(model, "name", None)
+        or (model if isinstance(model, str) else None)
+    )
+    if not ident:
+        return None
+    context_window = getattr(model, "context_window", None)
+    max_output_tokens = getattr(model, "max_output_tokens", None)
+    capabilities = getattr(model, "capabilities", None) or ()
+    return ProviderModelInfo(
+        id=str(ident),
+        context_window=context_window if isinstance(context_window, int) else None,
+        max_output_tokens=max_output_tokens if isinstance(max_output_tokens, int) else None,
+        capabilities=tuple(str(capability) for capability in capabilities),
+    )
+
+
+async def provider_models(
+    coordinator: Any, name: str = "", *, timeout: float = 15.0
+) -> ProviderModels:
+    """List models from one mounted provider, defaulting to the serving one."""
+    targets, error = _diagnostic_targets(coordinator, name)
+    if error:
+        return ProviderModels(name=name.strip(), error=error)
+    if not targets:
+        return ProviderModels(name="", error="no providers mounted")
+
+    if name.strip():
+        provider_name = name.strip()
+        provider = targets[provider_name]
+    else:
+        provider_name, provider = _primary_provider(coordinator)
+    try:
+        raw = await _invoke_models(provider, timeout)
+    except TimeoutError:
+        return ProviderModels(provider_name, error=f"timed out after {timeout:g}s")
+    except Exception as exc:  # noqa: BLE001 - diagnostic failures are data
+        return ProviderModels(provider_name, error=_provider_error(provider, exc))
+    models = tuple(info for model in raw if (info := _model_info(model)) is not None)
+    return ProviderModels(provider_name, models=models)
 
 
 async def set_model(coordinator: Any, model: str) -> tuple[bool, str]:
@@ -717,6 +880,9 @@ async def status_snapshot(coordinator: Any) -> StatusInfo:
 __all__ = [
     "EFFORT_LEVELS",
     "ModelListing",
+    "ProviderCheck",
+    "ProviderModelInfo",
+    "ProviderModels",
     "SkillInfo",
     "ToolDescriptor",
     "ToolInvocation",
@@ -733,7 +899,9 @@ __all__ = [
     "list_tools",
     "load_skill",
     "normalize_effort",
+    "provider_models",
     "set_effort",
     "set_model",
     "status_snapshot",
+    "test_providers",
 ]
