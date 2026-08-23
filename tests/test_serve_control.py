@@ -30,7 +30,7 @@ import pytest
 from amplifier_runtime.kernel.approval import ALLOW_ONCE, ApprovalBroker, ApprovalDetail
 from amplifier_runtime.kernel.events import Notification
 from amplifier_runtime.kernel.goal import GoalCommandResult
-from amplifier_runtime.kernel.persistence import SessionStore
+from amplifier_runtime.kernel.persistence import LEGACY_EVENTS_FILENAME, SessionStore
 from amplifier_runtime.kernel.serve import serve_loop
 from amplifier_runtime.kernel.session_control import (
     AUDIT_FILENAME,
@@ -521,6 +521,9 @@ async def test_reattach_replays_the_same_history_without_touching_it(
         "count": 2,
         "cursor": 2,
         "source": "ui-events",
+        "indexed_record_count": 2,
+        "legacy_record_count": 0,
+        "native_event_count": 2,
     }
     # The cursor lets a client resume where it stopped.
     assert second.out.all("history.begin")[1]["since"] == 1
@@ -578,9 +581,178 @@ async def test_legacy_resume_replays_visible_transcript_without_fabricating_ui_e
         "count": 0,
         "cursor": 0,
         "source": "transcript",
+        "indexed_record_count": 0,
+        "legacy_record_count": 0,
+        "native_event_count": 0,
         "transcript_count": 2,
     }
     assert not (_session_dir(runtime) / "ui-events.jsonl").exists()
+    assert await conn.drop() == 0
+
+
+async def test_legacy_hook_history_restores_tools_agents_usage_and_safe_metadata(
+    runtime: _ControlRuntime,
+) -> None:
+    """Canonical pre-ledger hooks are real durable evidence, not a prose-only session."""
+    session_dir = _session_dir(runtime)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    legacy = session_dir / LEGACY_EVENTS_FILENAME
+    records = [
+        {
+            "ts": "2026-07-14T11:21:11+00:00",
+            "event": "prompt:submit",
+            "session_id": runtime.session_id,
+            "data": {"prompt": "Inspect the workspace", "mode": "debug"},
+        },
+        {
+            "ts": "2026-07-14T11:21:12+00:00",
+            "event": "tool:pre",
+            "session_id": runtime.session_id,
+            "data": {
+                "tool_name": "bash",
+                "tool_call_id": "call-1",
+                "tool_input": {"command": "pwd"},
+            },
+        },
+        {
+            "ts": "2026-07-14T11:21:13+00:00",
+            "event": "tool:post",
+            "session_id": runtime.session_id,
+            "data": {
+                "tool_name": "bash",
+                "tool_call_id": "call-1",
+                "result": {"content": "/workspace"},
+            },
+        },
+        {
+            "ts": "2026-07-14T11:21:14+00:00",
+            "event": "delegate:agent_spawned",
+            "session_id": runtime.session_id,
+            "data": {
+                "agent": "foundation:bug-hunter",
+                "sub_session_id": "child-1",
+                "parent_session_id": runtime.session_id,
+            },
+        },
+        {
+            "ts": "2026-07-14T11:21:15+00:00",
+            "event": "content_block:end",
+            "session_id": runtime.session_id,
+            "data": {
+                "block_type": "text",
+                "block_index": 0,
+                "total_blocks": 1,
+                "block": {"type": "text", "text": "Workspace inspected."},
+                "usage": {
+                    "input_tokens": 120,
+                    "output_tokens": 30,
+                    "cost_usd": "0.04",
+                },
+            },
+        },
+        {
+            "ts": "2026-07-14T11:21:16+00:00",
+            "event": "foreign:secret_bag",
+            "session_id": runtime.session_id,
+            "data": {"api_key": "must-not-cross-the-wire"},
+        },
+    ]
+    legacy.write_text("".join(json.dumps(record) + "\n" for record in records))
+    runtime.store.save(
+        runtime.session_id,
+        [],
+        {
+            "name": "Interop session",
+            "bundle": "bundle:anchors",
+            "model": "claude-sonnet-5",
+            "active_mode": "debug",
+            "permission_posture": "bypass",
+            "permission_profile": {
+                "name": "bypass",
+                "auto": ["read", "write"],
+                "ask": [],
+                "block": [],
+                "classifier_gated": False,
+                "secret_extension": "must-not-cross-the-wire",
+            },
+            "turn_count": 1,
+            "session_cost_usd": "0.04",
+            "outcome_ledger": [
+                {
+                    "turn_id": "turn-1",
+                    "cost": "0.04",
+                    "tokens": 150,
+                    "yields": [{"kind": "tests", "label": "tests passed", "secret": "no"}],
+                    "secret_extension": "must-not-cross-the-wire",
+                }
+            ],
+            "api_key": "must-not-cross-the-wire",
+        },
+    )
+    before_events = legacy.read_bytes()
+    before_metadata = (session_dir / "metadata.json").read_bytes()
+
+    conn = _Connection(runtime)
+    conn.send(op="history.replay", since=0)
+    await conn.wait(lambda: conn.out.find("history.end") is not None)
+
+    begin = conn.out.find("history.begin")
+    assert begin is not None and begin["source"] == "legacy-events"
+    replayed = conn.out.all("runtime.event")
+    kinds = [record["event"]["kind"] for record in replayed]
+    assert kinds == [
+        "prompt_submit",
+        "tool_pre",
+        "tool_post",
+        "agent_spawned",
+        "content_block_end",
+        "provider_response_usage",
+    ]
+    assert replayed[0]["event"]["event_id"] == f"legacy:{LEGACY_EVENTS_FILENAME}:1"
+    assert replayed[-1]["event"]["input_tokens"] == 120
+    assert replayed[-1]["event"]["output_tokens"] == 30
+    assert replayed[-1]["event"]["cost_usd"] == "0.04"
+
+    history_metadata = conn.out.find("history.metadata")
+    assert history_metadata is not None
+    assert history_metadata["metadata"] == {
+        "name": "Interop session",
+        "bundle": "bundle:anchors",
+        "model": "claude-sonnet-5",
+        "active_mode": "debug",
+        "permission_posture": "bypass",
+        "session_cost_usd": "0.04",
+        "turn_count": 1,
+        "permission_profile": {
+            "name": "bypass",
+            "auto": ["read", "write"],
+            "ask": [],
+            "block": [],
+            "classifier_gated": False,
+        },
+        "outcome_ledger": [
+            {
+                "turn_id": "turn-1",
+                "cost": "0.04",
+                "tokens": 150,
+                "yields": [{"kind": "tests", "label": "tests passed"}],
+            }
+        ],
+    }
+    assert "must-not-cross-the-wire" not in json.dumps(conn.out.lines)
+    assert conn.out.find("history.end") == {
+        "schema_version": 1,
+        "type": "history.end",
+        "session_id": runtime.session_id,
+        "count": 6,
+        "cursor": 6,
+        "source": "legacy-events",
+        "indexed_record_count": 6,
+        "legacy_record_count": 6,
+        "native_event_count": 0,
+    }
+    assert legacy.read_bytes() == before_events
+    assert (session_dir / "metadata.json").read_bytes() == before_metadata
     assert await conn.drop() == 0
 
 

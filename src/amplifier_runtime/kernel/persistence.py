@@ -836,6 +836,40 @@ class SessionStore:
                     if isinstance(record, dict) and isinstance(record.get("kind"), str):
                         yield path, line_no, record
 
+    def read_hook_events_located(
+        self, session_id: str
+    ) -> Iterator[tuple[Path, int, dict[str, Any]]]:
+        """Iterate canonical legacy hook records with stable source locations.
+
+        Older Amplifier sessions persisted the rich hook stream in
+        ``events.jsonl`` as ``{ts, event, session_id, data}``, before the
+        UI-neutral ``ui-events.jsonl`` ledger existed.  Those records are not
+        :class:`UIEvent` dictionaries, so :meth:`read_events_located` correctly
+        excludes them.  Reattach still needs a read-only way to recover their
+        tool, agent, usage, and turn history through the *existing*
+        ``events.normalize`` boundary.
+
+        This iterator deliberately returns only the canonical outer shape and
+        never interprets payloads.  Unknown event names remain harmless: the
+        normalizer decides which records are client-visible.  The source path
+        and line number give replay a deterministic event id without mutating
+        the old append-only log.
+        """
+        path = self.session_dir(session_id) / LEGACY_EVENTS_FILENAME
+        if not path.is_file():
+            return
+        with path.open("r", encoding="utf-8") as handle:
+            for line_no, line in enumerate(handle, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict) and isinstance(record.get("event"), str):
+                    yield path, line_no, record
+
     # -- listing / lookup ----------------------------------------------------
 
     def list_sessions(self, *, top_level_only: bool = True) -> list[str]:

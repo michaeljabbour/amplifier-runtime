@@ -53,7 +53,9 @@ Wire (one JSON object per line):
                 {"op": "handoff.list"}
                 {"op": "audit.query",    "limit": 50}
                 {"op": "history.replay", "since": 0}     (durable event history for a reattach;
-                                                              legacy transcript fallback when no UI ledger exists)
+                                                              canonical legacy hook logs normalize through
+                                                              the same UI-event boundary; transcript-only
+                                                              sessions use a final compatibility fallback)
                  any op may carry "actor" (attribution), "lease" (write token) and
                  "idem" (idempotency key); write ops are submit/steer/approve/
                  decision/interrupt/goal.set/goal.clear.
@@ -90,10 +92,10 @@ Wire (one JSON object per line):
                 {"schema_version": 1, "type": "control.ack", "op": "submit", "idem": "..."}
                 {"schema_version": 1, "type": "handoff.created" | "handoff.claimed",
                  "handoff": {"handoff_id": "ho-...", "ref": "amplifier-session:<sid>#ho-...", ...}}
-                {"schema_version": 1, "type": "history.begin" | "history.end"}
+                {"schema_version": 1, "type": "history.begin" | "history.metadata" | "history.end"}
                  (replayed UI events are ordinary runtime.event records flagged "replay": true;
-                  a legacy session with no UI-event ledger yields distinct
-                  transcript.message records rather than fabricated UI events)
+                  history.metadata is an explicit display-safe allowlist; a transcript-only
+                  session yields distinct transcript.message records rather than fabricated events)
 
 The ``runtime.event`` envelope is byte-identical to the ``run`` JSONL contract
 (``JsonlRecords``); ``approval.required`` is the one record ``run`` cannot emit,
@@ -152,6 +154,7 @@ import asyncio
 import base64
 import binascii
 from dataclasses import asdict
+from datetime import datetime
 from hashlib import sha256
 import json
 import mimetypes
@@ -172,7 +175,13 @@ from .clipboard import (
     ImageMediaType,
 )
 from .context_meter import ContextMeter
-from .events import ContextCompacted, ProviderResponseUsage
+from .events import (
+    ContentBlockEnd,
+    ContextCompacted,
+    ProviderResponseUsage,
+    normalize,
+    usage_from_content_block_end,
+)
 from .jsonl import JsonlRecords
 from .prompt_history import PromptHistoryStore
 from .runtime import RealRuntime
@@ -811,6 +820,135 @@ def _handle_control_op(
     return []
 
 
+def _legacy_timestamp(value: Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _legacy_ui_events(store: Any, session_id: str) -> tuple[list[dict[str, Any]], int]:
+    """Normalize the pre-UI-ledger hook log without writing a migration.
+
+    Stable ids come from the append-only source line. Unknown hooks are counted
+    for catalog/replay completeness but stay off the wire because
+    :func:`events.normalize` is the one client-event contract.
+    """
+    events: list[dict[str, Any]] = []
+    record_count = 0
+    for path, line_no, raw in store.read_hook_events_located(session_id):
+        record_count += 1
+        event_name = str(raw.get("event", ""))
+        raw_data = raw.get("data")
+        payload = dict(raw_data) if isinstance(raw_data, dict) else {}
+        payload.setdefault("session_id", str(raw.get("session_id") or session_id))
+        payload.setdefault("parent_id", raw.get("parent_id"))
+        payload.setdefault("event_id", f"legacy:{path.name}:{line_no}")
+        timestamp = _legacy_timestamp(raw.get("ts"))
+        if timestamp is not None:
+            payload.setdefault("ts", timestamp)
+        normalized = normalize(event_name, payload)
+        if normalized is None:
+            continue
+        event = normalized.model_dump(mode="json")
+        events.append(event)
+        if isinstance(normalized, ContentBlockEnd):
+            usage = usage_from_content_block_end(normalized)
+            if usage is not None:
+                usage_event = usage.model_dump(mode="json")
+                usage_event["event_id"] = f"{event['event_id']}:usage"
+                usage_event["ts"] = event["ts"]
+                events.append(usage_event)
+    return events, record_count
+
+
+def _safe_history_metadata(store: Any, session_id: str) -> dict[str, Any]:
+    """Return an explicit, display-safe allowlist from persisted metadata."""
+    try:
+        raw = store.get_metadata(session_id)
+    except Exception:  # noqa: BLE001 -- metadata improves replay but never gates it
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+
+    result: dict[str, Any] = {}
+    for key in (
+        "name",
+        "description",
+        "bundle",
+        "model",
+        "active_mode",
+        "ui_mode",
+        "permission_posture",
+        "created",
+        "updated",
+        "session_cost_usd",
+    ):
+        value = raw.get(key)
+        if isinstance(value, (str, int, float, bool)) and not isinstance(value, bool):
+            result[key] = value
+        elif isinstance(value, bool):
+            result[key] = value
+
+    turn_count = raw.get("turn_count")
+    if isinstance(turn_count, int) and not isinstance(turn_count, bool) and turn_count >= 0:
+        result["turn_count"] = turn_count
+
+    tags = raw.get("tags")
+    if isinstance(tags, list):
+        result["tags"] = [str(tag) for tag in tags if isinstance(tag, str) and tag.strip()]
+
+    permission = raw.get("permission_profile")
+    if isinstance(permission, dict):
+        safe_permission: dict[str, Any] = {}
+        if isinstance(permission.get("name"), str):
+            safe_permission["name"] = permission["name"]
+        for key in ("auto", "ask", "block"):
+            values = permission.get(key)
+            if isinstance(values, list):
+                safe_permission[key] = [
+                    str(value) for value in values if isinstance(value, str) and value.strip()
+                ]
+        if isinstance(permission.get("classifier_gated"), bool):
+            safe_permission["classifier_gated"] = permission["classifier_gated"]
+        if safe_permission:
+            result["permission_profile"] = safe_permission
+
+    ledger = raw.get("outcome_ledger")
+    if isinstance(ledger, list):
+        safe_ledger: list[dict[str, Any]] = []
+        for entry in ledger:
+            if not isinstance(entry, dict):
+                continue
+            safe_entry: dict[str, Any] = {}
+            for key in (
+                "turn_id",
+                "checkpoint_id",
+                "cost",
+                "elapsed_seconds",
+                "tokens",
+                "cached_percent",
+                "interrupted",
+            ):
+                value = entry.get(key)
+                if isinstance(value, (str, int, float, bool)):
+                    safe_entry[key] = value
+            yields = entry.get("yields")
+            if isinstance(yields, list):
+                safe_entry["yields"] = [
+                    {key: item[key] for key in ("kind", "label") if isinstance(item.get(key), str)}
+                    for item in yields
+                    if isinstance(item, dict)
+                ]
+            safe_ledger.append(safe_entry)
+        result["outcome_ledger"] = safe_ledger
+    return result
+
+
 def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, Any]]:
     """Replay the durable UIEvent ledger for a reattaching participant.
 
@@ -820,13 +958,14 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
     resume from ``since`` without double-counting cost or confusing them with
     the live stream.
 
-    A resumed session can predate the UIEvent ledger while still carrying a
-    complete ``transcript.jsonl``. In that case ``RealRuntime`` exposes a
-    deliberately simplified ``restored_history`` of user/assistant prose.
-    Replay it as *distinct* ``transcript.message`` records: clients recover
-    the visible conversation without pretending transcript messages are
-    UIEvents or inventing plans, tool state, outputs, or telemetry that were
-    never persisted. The UI ledger remains the preferred, richer source.
+    A resumed session can predate the UIEvent ledger while still carrying the
+    original canonical ``events.jsonl`` hook stream. Those records normalize
+    through the same :mod:`events` boundary as live hooks, recovering the rich
+    tool, agent, usage, and turn timeline without mutating the legacy store.
+    Only sessions with neither event source fall back to RealRuntime's
+    deliberately simplified ``restored_history`` as distinct
+    ``transcript.message`` records. The native UI ledger remains the preferred
+    replay source.
     """
     session_id = str(getattr(runtime, "session_id", ""))
     try:
@@ -837,36 +976,45 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
         limit = int(op.get("limit", 0))
     except (TypeError, ValueError):
         limit = 0
-    events: list[dict[str, Any]] = []
-    ledger_cursor = 0
+    durable_events: list[dict[str, Any]] = []
+    native_event_count = 0
+    legacy_record_count = 0
+    store: Any = None
     try:
         store = _serve_store(runtime)
-        for index, raw in enumerate(store.read_events(session_id)):
-            ledger_cursor = index + 1
-            if index < since:
-                continue
-            events.append(
-                {
-                    "schema_version": 1,
-                    "type": "runtime.event",
-                    "replay": True,
-                    "sequence": index + 1,
-                    "timestamp": raw.get("ts", ""),
-                    "event": raw,
-                }
-            )
-            if limit > 0 and len(events) >= limit:
-                break
+        legacy_events, legacy_record_count = _legacy_ui_events(store, session_id)
+        native_events = list(store.read_events(session_id))
+        native_event_count = len(native_events)
+        durable_events = [*legacy_events, *native_events]
     except Exception:  # noqa: BLE001 -- replay is best-effort, never fatal
-        events = []
+        durable_events = []
     # `since` is an untrusted client cursor. Clamp it to the actual ledger tail
     # so one stale/incorrect wire sequence cannot permanently skip all future
     # durable events. With a limit, ledger_cursor is the last scanned record;
     # without one it is the durable tail.
-    effective_since = min(since, ledger_cursor)
-    cursor = int(events[-1]["sequence"]) if events else effective_since
+    durable_cursor = len(durable_events)
+    effective_since = min(since, durable_cursor)
+    selected_events = durable_events[effective_since:]
+    if limit > 0:
+        selected_events = selected_events[:limit]
+    events = [
+        {
+            "schema_version": 1,
+            "type": "runtime.event",
+            "replay": True,
+            "sequence": effective_since + index,
+            "timestamp": raw.get("ts", ""),
+            "event": raw,
+        }
+        for index, raw in enumerate(selected_events, start=1)
+    ]
+    cursor = effective_since + len(events)
     legacy_messages: list[dict[str, Any]] = []
-    if ledger_cursor == 0 and effective_since == 0:
+    conversation_kinds = {"prompt_submit", "content_block_end", "prompt_complete"}
+    has_event_conversation = any(
+        event.get("kind") in conversation_kinds for event in durable_events
+    )
+    if not has_event_conversation and effective_since == 0:
         restored = getattr(runtime, "restored_history", ())
         if isinstance(restored, (list, tuple)):
             pairs = [
@@ -890,13 +1038,28 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
                 for index, (role, text) in enumerate(pairs, start=1)
             ]
 
-    source = "transcript" if legacy_messages else "ui-events"
+    if legacy_record_count and native_event_count:
+        source = "mixed-events"
+    elif legacy_record_count:
+        source = "legacy-events"
+    elif native_event_count:
+        source = "ui-events"
+    else:
+        source = "transcript"
     begin = {
         "schema_version": 1,
         "type": "history.begin",
         "session_id": session_id,
         "since": effective_since,
         "source": source,
+    }
+    metadata = _safe_history_metadata(store, session_id) if store is not None else {}
+    metadata_record = {
+        "schema_version": 1,
+        "type": "history.metadata",
+        "replay": True,
+        "session_id": session_id,
+        "metadata": metadata,
     }
     end = {
         "schema_version": 1,
@@ -905,10 +1068,13 @@ def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, 
         "count": len(events),
         "cursor": cursor,
         "source": source,
+        "indexed_record_count": legacy_record_count + native_event_count,
+        "legacy_record_count": legacy_record_count,
+        "native_event_count": native_event_count,
     }
     if legacy_messages:
         end["transcript_count"] = len(legacy_messages)
-    return [begin, *events, *legacy_messages, end]
+    return [begin, metadata_record, *events, *legacy_messages, end]
 
 
 DEFAULT_HISTORY_QUERY_LIMIT = 10
