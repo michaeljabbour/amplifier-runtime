@@ -5,6 +5,6 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("amplifier-runtime")
 except PackageNotFoundError:
-    __version__ = "0.1.9"
+    __version__ = "0.1.10"
 
 __all__ = ["__version__"]

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "reviewed_at": "2026-08-05",
+  "reviewed_at": "2026-08-24",
   "anchors": {
     "commit": "dea5bd8fe11a7617dbcfc61c47f9f4f2fdc0b134",
     "bundle_sha256": "0998761a48a2efe56d8162472c7b92d5220a7743e3be7737cd5849b0ada0b7a6"
@@ -12,7 +12,7 @@
     "git+https://github.com/microsoft/amplifier-bundle-modes": "0ab29aeda4abb6f9e55009c9d521a3afed979643",
     "git+https://github.com/microsoft/amplifier-bundle-recipes": "b6ee26d3a3d59a99f75c362855be7a89d7762fb0",
     "git+https://github.com/microsoft/amplifier-bundle-skills": "cfa9f2a6f82002114c1bdfb7278978411d404982",
-    "git+https://github.com/microsoft/amplifier-module-context-simple": "6fd3f6f0b19789f8ffa8629c8b7c9c81312818a2",
+    "git+https://github.com/microsoft/amplifier-module-context-simple": "a2a098bd21dc4c11e177bb66d3c86f380f77457a",
     "git+https://github.com/microsoft/amplifier-module-hooks-approval": "4ee093eafd2d60ab10692a22363e86c7b25d02ce",
     "git+https://github.com/microsoft/amplifier-module-hooks-logging": "a4efafc834938ea53006808313e840b1136cb296",
     "git+https://github.com/microsoft/amplifier-module-hooks-status-context": "1b9e0ac001188360e635ac78c8d57719b7700f80",
