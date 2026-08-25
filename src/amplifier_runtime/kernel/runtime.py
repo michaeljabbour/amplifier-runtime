@@ -2093,15 +2093,68 @@ class RealRuntime:
         tools = self._initialized.coordinator.get("tools") or {}
         return tools.get("mode")
 
+    def _mode_discovery(self) -> Any | None:
+        """The human-facing ``ModeDiscovery`` registry (hooks-mode).
+
+        hooks-mode stashes the instance at ``session_state["mode_discovery"]``
+        and does not register it as a capability, so ``session_state`` is the
+        only access path — the same one :meth:`_native_safe_tools` uses.
+
+        Distinct from :meth:`_mode_tool`: that is the LLM-facing ``mode``
+        tool, whose ``operation=list`` deliberately filters on
+        ``entry.advertised`` and defers the unfiltered view to the client.
+        This registry IS that unfiltered view, which a human-facing mode
+        listing needs. Best-effort: any missing/broken mode system yields
+        ``None``, never raises.
+        """
+        init = self._initialized
+        if init is None:
+            return None
+        try:
+            state = getattr(init.coordinator, "session_state", None) or {}
+            return state.get("mode_discovery")
+        except Exception:  # noqa: BLE001 — a broken mode system must not break the caller
+            logger.debug("mode discovery lookup failed", exc_info=True)
+            return None
+
     async def list_native_modes(self) -> Any:
-        """Native mode catalog via the mounted mode tool (``operation=list``).
+        """Native mode catalog — ALL modes, advertised and unadvertised.
+
+        Prefers the human-facing ``ModeDiscovery`` registry so clients can
+        show unadvertised ("hidden") modes, which stay activatable by name
+        even though the LLM-facing ``mode`` tool filters them out of its own
+        listing. Falls back to that tool's ``operation=list`` unchanged when
+        discovery is unmounted or raises, so a session composed without
+        hooks-mode keeps its previous behavior exactly.
 
         Modes are dynamically composed through the bundle system
-        (superpowers, modes, occams-machete, …) — the app never hardcodes
-        them. Returns the tool's raw output (typically a mapping with a
-        ``modes`` list of ``{name, description, source}``); "" when no
-        mode system is mounted.
+        (superpowers, modes, occams-machete, …) — the runtime never
+        hardcodes them. Returns ``{"active_mode": ..., "modes": [{name,
+        description, source, advertised}, …]}`` from discovery, or the mode
+        tool's raw output from the fallback; "" when neither is mounted.
         """
+        init = self._initialized
+        discovery = self._mode_discovery()
+        if discovery is not None and init is not None:
+            try:
+                # No kwargs: ``include_unadvertised`` is deprecated upstream
+                # and warns; ``list_modes()`` already returns every mode.
+                listings = discovery.list_modes()
+                state = getattr(init.coordinator, "session_state", None) or {}
+                return {
+                    "active_mode": state.get("active_mode"),
+                    "modes": [
+                        {
+                            "name": entry.name,
+                            "description": entry.description,
+                            "source": entry.source,
+                            "advertised": entry.advertised,
+                        }
+                        for entry in listings
+                    ],
+                }
+            except Exception:  # noqa: BLE001 — degrade to the mode tool, never fail the listing
+                logger.debug("mode discovery list failed", exc_info=True)
         tool = self._mode_tool()
         if tool is None:
             return ""
@@ -2112,6 +2165,25 @@ class RealRuntime:
             return ""
         output = getattr(result, "output", None)
         return output if getattr(result, "success", False) and output else ""
+
+    async def native_mode_shortcuts(self) -> dict[str, str]:
+        """``shortcut -> mode name`` for every mode declaring a ``shortcut:``.
+
+        Sourced from ``ModeDiscovery.get_shortcuts()``, which gates only on
+        the shortcut being set — never on ``advertised`` — so a client can
+        dispatch an unadvertised mode's shortcut like any other. The
+        LLM-facing ``mode`` tool has no shortcut concept, so there is no
+        fallback: ``{}`` when no mode system is mounted or discovery fails
+        for any reason.
+        """
+        discovery = self._mode_discovery()
+        if discovery is None:
+            return {}
+        try:
+            return dict(discovery.get_shortcuts())
+        except Exception:  # noqa: BLE001 — a broken mode system must not break the caller
+            logger.debug("mode shortcuts lookup failed", exc_info=True)
+            return {}
 
     async def set_native_mode(self, name: str | None) -> tuple[bool, str]:
         """Activate (or clear, ``name=None``) a bundle-provided mode.
