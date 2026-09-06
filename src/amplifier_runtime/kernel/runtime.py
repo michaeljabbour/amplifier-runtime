@@ -940,7 +940,17 @@ class RealRuntime:
                     project_dir=self.project_dir,
                 )
                 logger.info("Relocated session %s from %s", session_id, source)
+            from .delegate_store import RECORD_NAME
+
+            if (store.session_dir(session_id) / RECORD_NAME).exists():
+                raise ValueError(
+                    "Resume this delegated session through its parent, not as a root session"
+                )
             transcript, metadata = store.load(session_id)
+            if metadata.get("delegate_record"):
+                raise ValueError(
+                    "Resume this delegated session through its parent, not as a root session"
+                )
             transcript, transcript_repair = repair_resumed_transcript(transcript)
             if transcript_repair:
                 # Persist before the first resumed model request. Provider-side
@@ -990,6 +1000,7 @@ class RealRuntime:
                 progress=self._progress,
                 provider_override=self._provider_override,
                 model_override=self._model_override,
+                durable_delegates=True,
             )
         except BundleNotFoundError:
             if resume_reason != "stored":
@@ -1004,6 +1015,7 @@ class RealRuntime:
                 progress=self._progress,
                 provider_override=self._provider_override,
                 model_override=self._model_override,
+                durable_delegates=True,
             )
         _apply_hook_suppression(
             resolved.mount_plan, self.bridge.emit, suppressed_hooks_setting(resolved.settings)
@@ -1124,6 +1136,7 @@ class RealRuntime:
 
         display = DisplaySystem(self.bridge.emit)
         spawner = SessionSpawner(
+            store=store,
             trackers=[self.bridge],
             approval_system=self.broker,
             display_system=display,
@@ -1140,6 +1153,7 @@ class RealRuntime:
             )
         )
         self._initialized = initialized
+        spawner.register(initialized.coordinator, initialized.session)
         # MCP config changes are reconciled against this exact coordinator.
         # The helper prefers an upstream public capability and otherwise uses
         # the audited single-server seam from the pinned tool-mcp version. Its
@@ -3028,6 +3042,8 @@ class RealRuntime:
         Returns the acknowledged event id, or ``None`` if there was nothing
         pending.
         """
+        if self.needs_you.pending or self.broker.head is not None:
+            return None
         session_dir = self.session_dir()
         initialized = self._initialized
         if session_dir is None or initialized is None:

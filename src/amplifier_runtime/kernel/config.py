@@ -751,16 +751,17 @@ def prune_unavailable_provider_fallbacks(mount_plan: dict[str, Any]) -> dict[str
     return mount_plan
 
 
-def enforce_runtime_capability_contracts(mount_plan: dict[str, Any]) -> dict[str, Any]:
-    """Remove module features the app runtime cannot actually provide.
+def enforce_runtime_capability_contracts(
+    mount_plan: dict[str, Any], *, durable_delegates: bool = False
+) -> dict[str, Any]:
+    """Suppress delegate resume unless the session host installs durable recovery.
 
-    Foundation overlays and persisted ``overrides`` are composed after the
-    packaged wrapper, so either can accidentally re-enable delegate session
-    resumption. The TUI intentionally registers only ``session.spawn`` and
-    child sessions are ephemeral; advertising ``session.resume`` produces a
-    recovery action that must fail. Enforce this invariant on the final mount
-    plan, after all composition and settings overrides.
+    Config-only consumers default to the conservative surface. RealRuntime
+    supplies durable_delegates=True and registers the actual capabilities;
+    explicit bundle choices to disable resume remain authoritative there.
     """
+    if durable_delegates:
+        return mount_plan
     for tool in mount_plan.get("tools") or []:
         if not isinstance(tool, dict) or tool.get("module") != "tool-delegate":
             continue
@@ -914,9 +915,32 @@ def expand_env_placeholders(config: dict[str, Any]) -> dict[str, Any]:
     ``_resolve_env_placeholder(...) or <default>`` pattern in
     ``provider_loader.py``.
 
+    Explicit provider secret placeholders without a value fail before mutation;
+    they must never select a provider's fallback account. Optional nonsecret
+    endpoints retain the omission behavior above.
+
     In place (mutating dicts/lists) because ``mount_plan`` must remain
     ``prepared.mount_plan`` itself — never a copy (risk #9).
     """
+
+    from amplifier_core.utils.truncate import SENSITIVE_KEYS
+
+    def _validate_provider_secrets(value: Any) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key.lower() in SENSITIVE_KEYS and isinstance(item, str):
+                    for match in _ENV_PATTERN.finditer(item):
+                        if match.group(2) is None and not os.environ.get(match.group(1)):
+                            raise ValueError(
+                                f"Provider credential variable {match.group(1)} is unset; "
+                                "configure it explicitly before starting a session"
+                            )
+                _validate_provider_secrets(item)
+        elif isinstance(value, list):
+            for item in value:
+                _validate_provider_secrets(item)
+
+    _validate_provider_secrets(config.get("providers", []))
 
     def _replace_match(match: re.Match[str]) -> str:
         default = match.group(2)
@@ -1585,6 +1609,7 @@ async def resolve_config(
     progress: Callable[[str, str], None] | None = None,
     provider_override: str | None = None,
     model_override: str | None = None,
+    durable_delegates: bool = False,
 ) -> ResolvedConfig:
     """The single configuration golden path (see module docstring).
 
@@ -1596,6 +1621,7 @@ async def resolve_config(
         amplifier_home: Amplifier home dir (default: ``~/.amplifier``).
         install_deps: Passed to ``Bundle.prepare()``.
         progress: Optional ``(action, detail)`` progress callback.
+        durable_delegates: The caller installs persistent spawn/resume capabilities.
 
     Raises:
         BundleNotFoundError: When the bundle cannot be discovered.
@@ -1676,7 +1702,7 @@ async def resolve_config(
     mount_plan = apply_module_overrides(prepared.mount_plan, settings)
     pin_mount_plan_sources(mount_plan, source_resolver)
     prune_unavailable_provider_fallbacks(mount_plan)
-    enforce_runtime_capability_contracts(mount_plan)
+    enforce_runtime_capability_contracts(mount_plan, durable_delegates=durable_delegates)
     # Per-invocation ``run --provider/--model`` overrides — ephemeral to THIS
     # boot (they mutate the in-memory plan, never a settings scope file).
     apply_run_overrides(mount_plan, provider=provider_override, model=model_override)

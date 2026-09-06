@@ -564,15 +564,22 @@ async def compact_context(coordinator: Any, focus: str = "") -> tuple[bool, str]
     if not callable(compact):
         return (False, "this context does not support /compact")
     before = await _message_count(context)
-    try:
-        await _maybe_await(compact(focus=focus) if focus else compact())
-    except TypeError:
-        # Some context modules take no ``focus`` kwarg.
+    pass_focus = bool(focus)
+    if pass_focus:
         try:
-            await _maybe_await(compact())
-        except Exception as error:  # noqa: BLE001
-            return (False, str(error))
-    except Exception as error:  # noqa: BLE001
+            signature = inspect.signature(compact)
+        except (TypeError, ValueError):
+            # Opaque native callables receive the requested focus once; an
+            # invocation failure must never trigger a second compaction.
+            pass
+        else:
+            try:
+                signature.bind(focus=focus)
+            except TypeError:
+                pass_focus = False
+    try:
+        await _maybe_await(compact(focus=focus) if pass_focus else compact())
+    except Exception as error:  # noqa: BLE001 -- report a context failure without repeating its effects
         return (False, str(error))
     after = await _message_count(context)
     if before == after:

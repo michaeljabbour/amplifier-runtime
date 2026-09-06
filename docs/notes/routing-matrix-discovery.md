@@ -1,0 +1,9 @@
+# Routing matrix discovery
+
+Runtime administration identifies matrices by the filename stem used in `routing.matrix`. A nonempty YAML mapping can appear without a `name` field. A declared name that disagrees with the filename is exposed through `MatrixEntry.declared_name_mismatch`; it does not change selection.
+
+`select_matrix_files` selects the first custom directory before bundle directories, preserving supplied directory order. It selects the file before parsing, so a malformed winning file does not silently reveal a lower-priority matrix. The loader's search order is documented in [hooks-routing's matrix loader](https://github.com/microsoft/amplifier-bundle-routing-matrix/blob/972b0ce7f0cbc2f7/modules/hooks-routing/amplifier_module_hooks_routing/matrix_loader.py). This administration fallback does not import executable modules from the cache.
+
+`MatrixEntry.matrix_file`, `candidate_files`, and `shadowed_files` describe the discovered files. They do not establish a running session's mounted bundle or its additional composed custom directories. When multiple cached bundle revisions supply a filename with no custom winner, `ambiguous_bundle` is true and `shadowed_files` is `None`; `matrix_file` is a deterministic preview, not a claim that a particular revision is mounted. A custom winner takes priority over all discovered bundle candidates. Clients should expose this distinction when presenting provenance.
+
+The regression cases are in `tests/test_routing_matrix_identity.py`. They cover nameless and mismatched-name files, custom priority independent of global lexical ordering, first-directory precedence, malformed winners, duplicate paths, multiple cached revisions, and read-only listing. Full client compatibility additionally requires the repository's offline and real-PTY checks.

@@ -142,13 +142,69 @@ def load_matrix(path: Path) -> dict[str, Any] | None:
     return content if isinstance(content, dict) else None
 
 
-def load_all_matrices(matrix_files: list[Path]) -> dict[str, dict[str, Any]]:
-    """Load matrix files into a ``name -> data`` map (skips nameless/broken)."""
-    matrices: dict[str, dict[str, Any]] = {}
+@dataclass(frozen=True)
+class MatrixSelection:
+    """Discovery winner and alternatives, not a running session's mounted source.
+
+    ``ambiguous_bundle`` means several cached bundle directories contain this
+    filename and no discovered custom file wins. ``shadowed_files`` is unknown
+    in that case; the selected cache file is only a deterministic preview.
+    """
+
+    path: Path
+    candidate_files: tuple[Path, ...]
+    shadowed_files: tuple[Path, ...] | None
+    ambiguous_bundle: bool
+
+
+def select_matrix_files(matrix_files: list[Path]) -> dict[str, MatrixSelection]:
+    """Select by filename and custom-directory priority, preserving directory order.
+
+    hooks-routing searches ``[*custom_routing_dirs, bundle_routing_dir]`` and
+    takes the first existing filename before parsing. Discovery knows only the
+    supplied directories, not a session's composed custom directories or active
+    bundle revision. Multiple cached bundle candidates therefore remain explicit.
+    """
+    loader_relative = Path("modules/hooks-routing/amplifier_module_hooks_routing/matrix_loader.py")
+    directories: dict[Path, bool] = {}
     for path in matrix_files:
-        data = load_matrix(path)
-        if data and isinstance(data.get("name"), str):
-            matrices[data["name"]] = data
+        directory = path.parent.resolve()
+        directories.setdefault(
+            directory,
+            directory.parent.name.startswith("amplifier-bundle-routing-matrix-")
+            or (directory.parent / loader_relative).is_file(),
+        )
+    ordered = [d for d, bundle in directories.items() if not bundle]
+    ordered.extend(d for d, bundle in directories.items() if bundle)
+    rank = {directory: index for index, directory in enumerate(ordered)}
+    by_name: dict[str, list[Path]] = {}
+    seen: set[Path] = set()
+    for path in sorted(matrix_files, key=lambda p: rank[p.parent.resolve()]):
+        canonical = path.resolve()
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        by_name.setdefault(path.stem, []).append(path)
+    selections: dict[str, MatrixSelection] = {}
+    for name, candidates in by_name.items():
+        winner = candidates[0]
+        ambiguous = directories[winner.parent.resolve()] and len(candidates) > 1
+        selections[name] = MatrixSelection(
+            path=winner,
+            candidate_files=tuple(candidates),
+            shadowed_files=None if ambiguous else tuple(candidates[1:]),
+            ambiguous_bundle=ambiguous,
+        )
+    return selections
+
+
+def load_all_matrices(matrix_files: list[Path]) -> dict[str, dict[str, Any]]:
+    """Load nonempty winning mappings by filename; never fall back after parse failure."""
+    matrices: dict[str, dict[str, Any]] = {}
+    for name, selection in select_matrix_files(matrix_files).items():
+        data = load_matrix(selection.path)
+        if data:
+            matrices[name] = data
     return matrices
 
 
@@ -273,6 +329,11 @@ class MatrixEntry:
     covered: int
     total: int
     has_providers: bool
+    matrix_file: Path | None = None
+    declared_name_mismatch: str | None = None
+    shadowed_files: tuple[Path, ...] | None = None
+    ambiguous_bundle: bool = False
+    candidate_files: tuple[Path, ...] = ()
 
 
 def list_matrices(
@@ -283,7 +344,9 @@ def list_matrices(
 ) -> tuple[MatrixEntry, ...]:
     """Discovered matrices with active/compatibility flags, name-sorted."""
     settings = load_merged_settings(bundle_admin.settings_paths(project_dir, amplifier_home))
-    matrices = load_all_matrices(discover_matrix_files(amplifier_home, fetch=fetch))
+    files = discover_matrix_files(amplifier_home, fetch=fetch)
+    selections = select_matrix_files(files)
+    matrices = load_all_matrices(files)
     active = active_matrix(settings)
     provider_types = configured_provider_types(settings)
     entries: list[MatrixEntry] = []
@@ -298,6 +361,13 @@ def list_matrices(
                 covered=covered,
                 total=total,
                 has_providers=bool(provider_types),
+                matrix_file=selections[name].path,
+                declared_name_mismatch=(
+                    str(data["name"]) if "name" in data and data["name"] != name else None
+                ),
+                shadowed_files=selections[name].shadowed_files,
+                ambiguous_bundle=selections[name].ambiguous_bundle,
+                candidate_files=selections[name].candidate_files,
             )
         )
     return tuple(entries)
@@ -544,6 +614,7 @@ __all__ = [
     "DEFAULT_MATRIX",
     "CandidateView",
     "MatrixEntry",
+    "MatrixSelection",
     "ResolvedRole",
     "RoleResolution",
     "RoleWaterfall",
@@ -566,4 +637,5 @@ __all__ = [
     "resolve_matrix",
     "save_matrix",
     "set_active_matrix",
+    "select_matrix_files",
 ]

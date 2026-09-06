@@ -266,6 +266,8 @@ class QueueBridge:
                     )
                 except Exception:  # noqa: BLE001 — lookup is best-effort enrichment
                     child_status = ""
+                if child_status == "error":
+                    normalized = normalized.model_copy(update={"success": False})
                 if child_status == "incomplete":
                     normalized = normalized.model_copy(
                         update={"success": False, "incomplete": True}

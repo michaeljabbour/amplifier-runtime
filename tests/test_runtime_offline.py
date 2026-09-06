@@ -1497,3 +1497,71 @@ def test_realruntime_status_wrapper_snapshots_the_stub_coordinator() -> None:
         assert info.agents == ("zen-architect",)
 
     asyncio.run(run())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("canonical_record", [True, False])
+async def test_root_resume_rejects_child_when_either_recovery_marker_exists(
+    offline_env, canonical_record: bool
+) -> None:
+    from amplifier_runtime.kernel.delegate_store import RECORD_NAME
+    from amplifier_runtime.kernel.persistence import SessionStore
+
+    store = SessionStore(project_dir=offline_env["project"])
+    session_id = "delegatedchild01"
+    metadata = {"session_id": session_id, "bundle": "offline"}
+    if not canonical_record:
+        metadata["delegate_record"] = RECORD_NAME
+    store.save(session_id, [{"role": "user", "content": "child task"}], metadata)
+    if canonical_record:
+        # A missing metadata marker must not let root repair corrupt child data.
+        (store.session_dir(session_id) / RECORD_NAME).write_text("invalid record")
+    resumed = RealRuntime(
+        bundle="offline",
+        resume_id=session_id,
+        project_dir=offline_env["project"],
+        mode=lambda: "chat",
+    )
+    try:
+        with pytest.raises(ValueError, match="through its parent"):
+            await resumed.start()
+        assert resumed._initialized is None
+    finally:
+        await resumed.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_registered_delegate_resume_remounts_real_core_session(offline_env) -> None:
+    """The durable host callback remounts Core modules and the saved persona."""
+    from amplifier_runtime.kernel.delegate_store import DelegateStore
+    from amplifier_runtime.kernel.persistence import SessionStore
+
+    runtime = await _started_runtime(offline_env["project"], mode="auto")
+    try:
+        initialized = runtime._initialized
+        assert initialized is not None
+        spawn = initialized.coordinator.get_capability("session.spawn")
+        resume = initialized.coordinator.get_capability("session.resume")
+        child_id = initialized.session_id + "-recovery_probe"
+        first = await spawn(
+            agent_name="researcher",
+            instruction="Investigate the fixture",
+            parent_session=initialized.session,
+            sub_session_id=child_id,
+            agent_configs={"researcher": {"instruction": "Keep this research persona."}},
+            tool_inheritance={"exclude_tools": ["tool-fake"]},
+        )
+        assert first["status"] == "success"
+        second = await resume(child_id, "Continue the fixture investigation")
+        assert second["status"] == "success"
+        assert second["session_id"] == child_id
+        record = DelegateStore(SessionStore(project_dir=offline_env["project"])).load(
+            child_id, initialized.session_id
+        )
+        contents = [str(message.get("content", "")) for message in record.messages]
+        assert any("Keep this research persona." in value for value in contents)
+        assert any("Investigate the fixture" in value for value in contents)
+        assert any("Continue the fixture investigation" in value for value in contents)
+        assert record.status == "success"
+    finally:
+        await runtime.cleanup()

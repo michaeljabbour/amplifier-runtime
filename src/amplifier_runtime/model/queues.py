@@ -27,6 +27,7 @@ import threading
 from collections.abc import Callable, Iterable
 from time import monotonic
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -360,6 +361,8 @@ class NeedsYouQueue(_ListenerMixin):
     Lifecycle: ``defer`` → ``answer`` (human acts; logs ``Applying
     decision: …``) → ``consume_answered`` (the answer became a next-turn
     instruction). ``dismiss`` drops a decision without acting.
+    IDs belong to this queue instance; a reply from an earlier runtime cannot
+    resolve a newly created question. Pending rows are not restored on restart.
     """
 
     _MAX_DECISIONS = 100
@@ -367,6 +370,7 @@ class NeedsYouQueue(_ListenerMixin):
     def __init__(self, *, clock: Callable[[], float] = monotonic) -> None:
         super().__init__()
         self._clock = clock
+        self._request_namespace = uuid4().hex
         self._next_id = 1
         self._items: list[NeedsYouItem] = []
         self._defer_listeners: list[Callable[[NeedsYouItem], None]] = []
@@ -482,7 +486,7 @@ class NeedsYouQueue(_ListenerMixin):
                 clean_choices.append(label)
                 clean_descriptions.append(_clean_line(descs[i], 500) if i < len(descs) else "")
             item = NeedsYouItem(
-                decision_id=f"decision-{self._next_id}",
+                decision_id=f"decision-{self._request_namespace}-{self._next_id}",
                 question=clean_question,
                 reason=_clean_line(reason, 4_096),
                 choices=tuple(clean_choices),

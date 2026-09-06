@@ -248,3 +248,48 @@ async def test_staged_details_pair_fifo_per_prompt() -> None:
         broker.answer(ticket.ticket_id, DENY)
     assert await t1 == DENY
     assert await t2 == DENY
+
+
+def test_recreated_question_queue_rejects_an_earlier_runtime_reply() -> None:
+    earlier = NeedsYouQueue()
+    old = earlier.defer("Which route?", choices=("Direct", "Adapter"))
+    current = NeedsYouQueue()
+    first = current.defer("Which route?", choices=("Direct", "Adapter"))
+    second = current.defer("Which color?", choices=("Blue", "Green"))
+
+    with pytest.raises(KeyError, match="unknown decision"):
+        current.answer(old.decision_id, "Direct")
+    assert current.pending == (first, second)
+    current.answer(first.decision_id, "Adapter")
+    assert current.pending == (second,)
+    with pytest.raises(ValueError, match="already answered"):
+        current.answer(first.decision_id, "Direct")
+    assert current.answered[0].answer == "Adapter"
+
+
+@pytest.mark.asyncio
+async def test_recreated_approval_broker_rejects_an_earlier_runtime_reply() -> None:
+    earlier = ApprovalBroker()
+    current = ApprovalBroker()
+    presented = [asyncio.Event(), asyncio.Event()]
+    earlier.add_listener(presented[0].set)
+    current.add_listener(presented[1].set)
+    old_request = asyncio.create_task(earlier.request_approval("Publish?"))
+    new_request = asyncio.create_task(current.request_approval("Publish?"))
+    try:
+        await asyncio.wait_for(asyncio.gather(*(event.wait() for event in presented)), timeout=1)
+        assert earlier.head is not None
+        assert current.head is not None
+        with pytest.raises(KeyError, match="unknown approval ticket"):
+            current.answer(earlier.head.ticket_id, ALLOW_ALWAYS)
+        assert not new_request.done()
+        ticket_id = current.head.ticket_id
+        current.answer(ticket_id, DENY)
+        with pytest.raises(KeyError, match="already resolved"):
+            current.answer(ticket_id, ALLOW_ALWAYS)
+        assert await new_request == DENY
+    finally:
+        for request in (old_request, new_request):
+            if not request.done():
+                request.cancel()
+        await asyncio.gather(old_request, new_request, return_exceptions=True)

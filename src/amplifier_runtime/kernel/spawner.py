@@ -58,6 +58,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from .git_yield import GitDiffSnapshot, capture_git_diff
+from .delegate_store import DelegateRecord, DelegateStore, refresh_provider_secrets
+from .persistence import SessionStore
+from ..model.redaction import scrub_value
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +127,7 @@ def generate_sub_session_id(parent_id: str, agent_name: str) -> str:
 
 
 class SessionSpawner:
-    """The app's ``session.spawn`` capability implementation."""
+    """Spawn/resume host; an optional store enables private durable checkpoints."""
 
     def __init__(
         self,
@@ -134,11 +137,15 @@ class SessionSpawner:
         approval_system: Any | None = None,
         display_system: Any | None = None,
         governance_hook: Tracker | None = None,
+        store: SessionStore | None = None,
         max_depth: int = DEFAULT_MAX_DEPTH,
         id_generator: Callable[[str, str], str] = generate_sub_session_id,
     ) -> None:
         if max_depth < 1:
             raise ValueError("max_depth must be at least 1")
+        self._store = DelegateStore(store) if store is not None else None
+        self._partials: dict[str, str] = {}
+        self._parents: dict[str, str] = {}
         self._session_factory = session_factory or _default_session_factory
         self._trackers = tuple(trackers)
         self._approval_system = approval_system
@@ -159,11 +166,42 @@ class SessionSpawner:
         self._statuses: dict[str, str] = {}
         """Child result status per sub-session id for bridge enrichment."""
 
-    def register(self, coordinator: Any) -> None:
+    def register(self, coordinator: Any, parent_session: Any | None = None) -> None:
         """Install this spawner as the coordinator's ``session.spawn``
         capability — MUST run after ``create_session`` and before
         ``execute`` (integration-guide timing contract)."""
         coordinator.register_capability(SPAWN_CAPABILITY, self.spawn)
+        if self._store is not None and parent_session is not None:
+
+            def checked(result: dict[str, Any]) -> dict[str, Any]:
+                if result.get("status") in {"error", "incomplete"}:
+                    raise RuntimeError(
+                        scrub_value(
+                            f"Delegate {result.get('session_id', '')} {result['status']}: "
+                            f"{result.get('output', '')}. Inspect retained work before resuming."
+                        )
+                    )
+                return result
+
+            async def spawn(*args: Any, **kwargs: Any) -> dict[str, Any]:
+                return checked(await self.spawn(*args, **kwargs))
+
+            def partial(sub_session_id: str) -> dict[str, Any] | None:
+                if self._parents.get(sub_session_id) != str(parent_session.session_id):
+                    return None
+                return self.partial(sub_session_id)
+
+            coordinator.register_capability(SPAWN_CAPABILITY, spawn)
+
+            async def resume(
+                sub_session_id: str, instruction: str, **kwargs: Any
+            ) -> dict[str, Any]:
+                return checked(
+                    await self.resume(sub_session_id, instruction, parent_session, **kwargs)
+                )
+
+            coordinator.register_capability("session.resume", resume)
+            coordinator.register_capability("session.partial", partial)
 
     def set_governance_hook(self, hook: Tracker | None) -> None:
         """Attach the app's trust ``GovernanceHook`` so child lanes inherit
@@ -184,13 +222,80 @@ class SessionSpawner:
 
     def result_for(self, sub_session_id: str) -> str:
         """The recorded final output summary for a child ("" unknown)."""
+        partial = self._partials.get(sub_session_id)
+        if partial:
+            return _result_summary("Partial work: " + partial)
         return self._results.get(sub_session_id, "")
 
     def status_for(self, sub_session_id: str) -> str:
         """The recorded child status ("" unknown)."""
         return self._statuses.get(sub_session_id, "")
 
+    def partial(self, sub_session_id: str) -> dict[str, Any] | None:
+        """Return bounded diagnostic output without consuming the safe checkpoint."""
+        text = self._partials.get(sub_session_id)
+        if text:
+            _remember(self._statuses, sub_session_id, "incomplete")
+        return {"text": text, "segments": 1, "source": "runtime-delegate-partial"} if text else None
+
     async def spawn(
+        self, agent_name: str, instruction: str, parent_session: Any, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Execute a child under exclusive ownership when persistence is available."""
+        if self._store is None:
+            return await self._spawn(agent_name, instruction, parent_session, **kwargs)
+        child_id = kwargs.pop("sub_session_id", None) or self._id_generator(
+            str(parent_session.session_id), agent_name
+        )
+        with self._store.claim(child_id):
+            if (self._store.store.session_dir(child_id) / "delegate.v1.json").exists():
+                raise ValueError("Delegate already exists; resume it instead of spawning again")
+            return await self._spawn(
+                agent_name, instruction, parent_session, sub_session_id=child_id, **kwargs
+            )
+
+    async def resume(
+        self,
+        sub_session_id: str,
+        instruction: str,
+        parent_session: Any,
+        *,
+        provider_preferences: list[Any] | None = None,
+        model_role: str | list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Resume a persisted child through its parent, retaining resolved routing."""
+        if self._store is None:
+            raise FileNotFoundError("Delegate persistence is unavailable")
+        with self._store.claim(sub_session_id):
+            record = self._store.load(sub_session_id, str(parent_session.session_id))
+            expected_role = record.config.get("model_role")
+            expected_prefs = record.config.get("provider_preferences")
+            if model_role is not None and model_role != expected_role:
+                raise ValueError(
+                    "Resuming preserves the child's routing; start a new delegate to change it"
+                )
+            if provider_preferences is not None:
+
+                def values(raw: Any) -> list[dict[str, Any]]:
+                    return [
+                        {"provider": p.provider, "model": p.model, "config": p.config}
+                        for p in _as_preferences(raw)
+                    ]
+
+                if values(provider_preferences) != values(expected_prefs):
+                    raise ValueError(
+                        "Resuming preserves the child's routing; start a new delegate to change it"
+                    )
+            return await self._spawn(
+                record.agent_name,
+                instruction,
+                parent_session,
+                sub_session_id=sub_session_id,
+                _record=record,
+                self_delegation_depth=record.self_delegation_depth,
+            )
+
+    async def _spawn(
         self,
         agent_name: str,
         instruction: str,
@@ -205,9 +310,10 @@ class SessionSpawner:
         model_role: str | list[str] | None = None,
         self_delegation_depth: int = 0,
         session_metadata: dict[str, Any] | None = None,
+        _record: DelegateRecord | None = None,
         **_kwargs: Any,
     ) -> dict[str, Any]:
-        """Spawn, execute, persist-nothing, and unwind one child session.
+        """Create or restore, execute, checkpoint, and unwind one child session.
 
         The keyword surface is tool-delegate's spawn contract verbatim
         (module docstring); ``**_kwargs`` absorbs only future additions.
@@ -246,6 +352,25 @@ class SessionSpawner:
         # a single-provider setup or missing resolver leaves the child on the
         # parent provider (apply_* skips unmounted providers). Never raises.
         config = await _apply_routing(config, parent_coordinator, provider_preferences, model_role)
+        if _record is not None:
+            overlay = _record.overlay
+            config = refresh_provider_secrets(_record.config, parent_session.config)
+            parent_messages = [dict(m) for m in _record.messages if m.get("role") != "system"]
+            if (
+                str(parent_coordinator.get_capability("session.working_dir") or "")
+                != _record.project_dir
+            ):
+                raise ValueError(
+                    "Delegate working directory changed; resume on its original project"
+                )
+        if model_role is not None:
+            config["model_role"] = model_role
+        if provider_preferences is not None:
+            config["provider_preferences"] = [
+                {"provider": p.provider, "model": p.model, "config": p.config}
+                for p in _as_preferences(provider_preferences)
+            ]
+        _remember(self._parents, child_id, str(parent_session.session_id))
         approval_system = self._approval_system or getattr(
             parent_coordinator, "approval_system", None
         )
@@ -259,61 +384,146 @@ class SessionSpawner:
             display_system=display_system,
         )
         child_coordinator = child.coordinator
-        # Module resolution + working dir must exist BEFORE initialize():
-        # modules resolve sources and read the cwd capability while mounting
-        # (reference: session_spawn_inprocess.py, PreparedBundle.spawn).
-        await _inherit_module_resolver(parent_coordinator, child_coordinator)
-        _inherit_capabilities(parent_coordinator, child_coordinator, ("session.working_dir",))
-        await child.initialize()
-
         unregisters: list[Callable[[], None]] = []
-        hooks = child_coordinator.get("hooks")
-        activity = _ChildToolActivity()
-        if hooks is not None:
-            unregisters.append(activity.register_hooks(hooks))
-            # Governance first, high precedence: the child lane inherits the
-            # root's live trust posture so a gated mode (plan/careful) blocks
-            # the SAME actions in the lane as in the root (issue #38). Native
-            # approval inheritance already flowed; the TUI's own posture did
-            # not. Registered before the telemetry trackers so it settles a
-            # tool:pre before any display hook paints it.
-            if self._governance_hook is not None:
-                unregisters.append(self._governance_hook.register_hooks(hooks))
-            for tracker in self._trackers:
-                unregisters.append(tracker.register_hooks(hooks))
-        child_coordinator.register_capability(DEPTH_CAPABILITY, depth)
-        child_coordinator.register_capability(SPAWN_CAPABILITY, self.spawn)
-        # tool-delegate reads this in the child for its own depth limiting.
-        child_coordinator.register_capability("self_delegation_depth", self_delegation_depth)
-        _inherit_capabilities(
-            parent_coordinator,
-            child_coordinator,
-            ("mention_resolver", "mention_deduplicator"),
-        )
-        # Runtime skill overlays (issue #38): skills loaded into the root at
-        # runtime live under the parent coordinator's runtime_skill_overlay
-        # capability; copy the list onto the child so a delegated agent sees
-        # the same runtime-loaded skills (reference: session_spawn_inprocess).
-        _inherit_skill_overlays(parent_coordinator, child_coordinator)
-        implementation_agent = _is_implementation_agent(agent_name)
-        await _seed_child_context(
-            child_coordinator,
-            overlay,
-            parent_messages,
-            execution_agent=implementation_agent,
-        )
-
+        record = _record
+        cancellation_linked = False
+        display_pushed = False
         parent_cancellation = getattr(parent_coordinator, "cancellation", None)
         child_cancellation = getattr(child_coordinator, "cancellation", None)
-        cancellation_linked = False
-        if parent_cancellation is not None and child_cancellation is not None:
-            parent_cancellation.register_child(child_cancellation)
-            cancellation_linked = True
-
-        if display_system is not None and hasattr(display_system, "push_nesting"):
-            display_system.push_nesting()
-
         try:
+            # Module resolution + working dir must exist BEFORE initialize():
+            # modules resolve sources and read the cwd capability while mounting
+            # (reference: session_spawn_inprocess.py, PreparedBundle.spawn).
+            await _inherit_module_resolver(
+                parent_coordinator,
+                child_coordinator,
+                resume_config=config if self._store is not None else None,
+                parent_config=parent_session.config,
+            )
+            _inherit_capabilities(parent_coordinator, child_coordinator, ("session.working_dir",))
+            await child.initialize()
+
+            hooks = child_coordinator.get("hooks")
+            activity = _ChildToolActivity()
+            if hooks is not None:
+                unregisters.append(activity.register_hooks(hooks))
+                # Governance first, high precedence: the child lane inherits the
+                # root's live trust posture so a gated mode (plan/careful) blocks
+                # the SAME actions in the lane as in the root (issue #38). Native
+                # approval inheritance already flowed; the TUI's own posture did
+                # not. Registered before the telemetry trackers so it settles a
+                # tool:pre before any display hook paints it.
+                if self._governance_hook is not None:
+                    unregisters.append(self._governance_hook.register_hooks(hooks))
+                for tracker in self._trackers:
+                    unregisters.append(tracker.register_hooks(hooks))
+            child_coordinator.register_capability(DEPTH_CAPABILITY, depth)
+            self.register(child_coordinator, child)
+            # tool-delegate reads this in the child for its own depth limiting.
+            child_coordinator.register_capability("self_delegation_depth", self_delegation_depth)
+            _inherit_capabilities(
+                parent_coordinator,
+                child_coordinator,
+                ("mention_resolver", "mention_deduplicator"),
+            )
+            # Runtime skill overlays (issue #38): skills loaded into the root at
+            # runtime live under the parent coordinator's runtime_skill_overlay
+            # capability; copy the list onto the child so a delegated agent sees
+            # the same runtime-loaded skills (reference: session_spawn_inprocess).
+            _inherit_skill_overlays(parent_coordinator, child_coordinator)
+            implementation_agent = _is_implementation_agent(agent_name)
+            await _seed_child_context(
+                child_coordinator,
+                overlay,
+                parent_messages,
+                execution_agent=implementation_agent,
+            )
+
+            if _record is not None and _record.status != "success":
+                await child_coordinator.get("context").add_message(
+                    {
+                        "role": "user",
+                        "content": (
+                            "This delegate resumes from its last safe checkpoint. Tools may have "
+                            "executed after that checkpoint; inspect actual state before repeating "
+                            "side effects. Partial output is diagnostic, not a completed answer."
+                        ),
+                    }
+                )
+            if self._store is not None:
+                context = child_coordinator.get("context")
+                if context is None or not hasattr(context, "get_messages"):
+                    raise ValueError("Delegate context does not support durable checkpoints")
+                if record is None:
+                    record = DelegateRecord(
+                        session_id=child_id,
+                        parent_id=str(parent_session.session_id),
+                        agent_name=agent_name,
+                        config=config,
+                        overlay=overlay,
+                        project_dir=str(
+                            parent_coordinator.get_capability("session.working_dir") or ""
+                        ),
+                        self_delegation_depth=self_delegation_depth,
+                    )
+                record.status = "in_progress"
+                record.output = ""
+                record.execution_id = secrets.token_hex(16)
+                record.config = config
+                if not await self._store.checkpoint(record, context):
+                    raise ValueError("Delegate inherited incomplete tool calls; cannot checkpoint")
+                self._partials.pop(child_id, None)
+
+                async def checkpoint(event: str, data: dict[str, Any]) -> Any:
+                    from amplifier_core import HookResult
+
+                    assert self._store is not None and record is not None
+                    await self._store.checkpoint(record, context)
+                    return HookResult(action="continue")
+
+                async def partial(event: str, data: dict[str, Any]) -> Any:
+                    from amplifier_core import HookResult
+
+                    block = data.get("block") or {}
+                    text = ""
+                    if block.get("type") == "text":
+                        text = str(block.get("text") or "")
+                    elif block.get("type") == "tool_call":
+                        text = (
+                            "\n[Unfinished tool activity: "
+                            + str(block.get("name") or "tool")
+                            + "]\n"
+                        )
+                    if text:
+                        previous = self._partials.get(child_id, "")
+                        _remember(self._partials, child_id, scrub_value((previous + text)[-16000:]))
+                        assert self._store is not None and record is not None
+                        record.output = self._partials[child_id]
+                        self._store.save_partial(record)
+                    return HookResult(action="continue")
+
+                if hooks is not None:
+                    unregisters.append(
+                        hooks.register(
+                            "provider:request", checkpoint, priority=999, name="delegate-checkpoint"
+                        )
+                    )
+                    unregisters.append(
+                        hooks.register(
+                            "content_block:end", partial, priority=999, name="delegate-partial"
+                        )
+                    )
+
+            parent_cancellation = getattr(parent_coordinator, "cancellation", None)
+            child_cancellation = getattr(child_coordinator, "cancellation", None)
+            if parent_cancellation is not None and child_cancellation is not None:
+                parent_cancellation.register_child(child_cancellation)
+                cancellation_linked = True
+
+            if display_system is not None and hasattr(display_system, "push_nesting"):
+                display_system.push_nesting()
+                display_pushed = True
+
             before = await _git_snapshot(parent_coordinator) if implementation_agent else None
             output = await child.execute(instruction)
             status = "success"
@@ -332,10 +542,29 @@ class SessionSpawner:
                     )
             if activity.incomplete:
                 status = "incomplete"
+            if self._store is not None and record is not None:
+                record.status = status
+                record.output = str(output)
+                if not await self._store.checkpoint(record, child_coordinator.get("context")):
+                    status = "incomplete"
+                    record.status = "incomplete"
+                    self._store.save(record)
+            if status == "success":
+                self._partials.pop(child_id, None)
+        except asyncio.CancelledError:
+            _remember(self._statuses, child_id, "incomplete")
+            raise
         except Exception as error:  # noqa: BLE001 — crash-isolate a delegated lane: any child failure becomes a structured error result
             logger.debug("Child session %s failed", child_id, exc_info=True)
             output = f"agent failed: {error}"
             status = "error"
+            if self._store is not None and record is not None:
+                record.status = "error"
+                record.output = self._partials.get(child_id) or str(output)
+                try:
+                    self._store.save(record)
+                except OSError:
+                    logger.warning("Could not persist delegate failure", exc_info=True)
         finally:
             for unregister in reversed(unregisters):
                 try:
@@ -347,7 +576,11 @@ class SessionSpawner:
                     parent_cancellation.unregister_child(child_cancellation)
                 except Exception:  # noqa: BLE001 — best-effort finally cleanup: a cancellation-unlink failure must not mask the result
                     logger.debug("Cancellation unlink failed", exc_info=True)
-            if display_system is not None and hasattr(display_system, "pop_nesting"):
+            if (
+                display_pushed
+                and display_system is not None
+                and hasattr(display_system, "pop_nesting")
+            ):
                 display_system.pop_nesting()
             try:
                 await child.cleanup()
@@ -558,31 +791,72 @@ def _apply_session_metadata(config: dict[str, Any], metadata: dict[str, Any]) ->
     config["session"] = session_cfg
 
 
-async def _inherit_module_resolver(parent_coordinator: Any, child_coordinator: Any) -> None:
-    """Mount the parent's ``module-source-resolver`` on the child.
+async def _inherit_module_resolver(
+    parent_coordinator: Any,
+    child_coordinator: Any,
+    *,
+    resume_config: dict[str, Any] | None = None,
+    parent_config: dict[str, Any] | None = None,
+) -> None:
+    """Mount source resolution before child initialization.
 
-    Foundation mounts a BundleModuleResolver on the root session; the
-    child's config references the same ``git+``/``file:`` sources, and
-    without the resolver amplifier-core's loader can only do entry-point
-    discovery — the child fails to mount its orchestrator/provider and no
-    telemetry ever fires. Must run BEFORE ``initialize()``.
+    Durable children use a separate Foundation resolver. Only paths whose
+    module ID and source match the live parent's plan are inherited; explicit
+    child sources activate independently of other children's caches. Modules
+    without a source remain eligible for installed entry-point resolution.
+    Custom resolvers require equivalent isolation to support durable children.
     """
     get: Any = getattr(parent_coordinator, "get", None)
     mount: Any = getattr(child_coordinator, "mount", None)
-    if not callable(get) or not callable(mount):
+    if resume_config is None:
+        if not callable(get) or not callable(mount):
+            return
+        try:
+            resolver = get("module-source-resolver")
+            if resolver is not None:
+                mounted = mount("module-source-resolver", resolver)
+                if asyncio.iscoroutine(mounted):
+                    await mounted
+        except Exception:  # noqa: BLE001 — preserve best-effort source inheritance for new children
+            logger.debug("module resolver inheritance failed", exc_info=True)
         return
-    try:
-        resolver = get("module-source-resolver")
-    except Exception:  # noqa: BLE001 — best-effort probe: a missing/broken resolver simply skips inheritance
-        resolver = None
+    resolver = get("module-source-resolver") if callable(get) else None
     if resolver is None:
+        from .delegate_store import _module_sources
+
+        if any(source for sources in _module_sources(resume_config).values() for source in sources):
+            raise ValueError("Durable delegate has module sources but no module resolver")
         return
-    try:
-        mounted = mount("module-source-resolver", resolver)
-        if asyncio.iscoroutine(mounted):
-            await mounted
-    except Exception:  # noqa: BLE001 — best-effort inheritance: a mount failure is logged, never fatal to the child
-        logger.debug("module resolver inheritance failed", exc_info=True)
+    if not callable(mount):
+        raise ValueError("Delegate coordinator cannot mount its module resolver")
+    if resume_config is not None:
+        from amplifier_foundation.bundle._prepared import BundleModuleResolver
+
+        from .delegate_store import _module_sources
+
+        if type(resolver) is not BundleModuleResolver:
+            raise ValueError("Durable delegate requires a source-isolated Foundation resolver")
+        parent_sources = _module_sources(parent_config or {})
+        saved_sources = _module_sources(resume_config)
+        reusable = {
+            module: path
+            for module, path in resolver._paths.items()
+            if module in saved_sources and saved_sources[module] == parent_sources.get(module)
+        }
+        isolated = BundleModuleResolver(reusable, activator=resolver._activator)
+        for module, sources in saved_sources.items():
+            if module not in reusable:
+                if len(sources) != 1:
+                    raise ValueError("Delegate module has ambiguous saved sources")
+                source = next(iter(sources))
+                if source is None:
+                    # Core may load installed entry points without a source hint.
+                    continue
+                await isolated.async_resolve(module, source_hint=source)
+        resolver = isolated
+    mounted = mount("module-source-resolver", resolver)
+    if asyncio.iscoroutine(mounted):
+        await mounted
 
 
 def _inherit_capabilities(

@@ -165,6 +165,7 @@ from collections.abc import Callable
 from contextlib import redirect_stdout
 from time import monotonic
 from typing import IO, Any, cast, get_args
+from uuid import uuid4
 
 from . import session_manager
 from .clipboard import (
@@ -443,6 +444,7 @@ state), not in :func:`_handle_control_op`, which is control-plane-only."""
 OP_PERMISSIONS: dict[str, str] = {
     # -- reads: observe, never change anything -------------------------------
     "runtime.capabilities": READ,
+    "input.status": READ,
     "artifact.read": READ,
     "settings.schema": READ,
     "settings.get": READ,
@@ -453,6 +455,8 @@ OP_PERMISSIONS: dict[str, str] = {
     "audit.query": READ,
     "history.query": READ,
     "history.replay": READ,
+    "history.outline": READ,
+    "history.window": READ,
     "context.get": READ,
     "goal.status": READ,
     "effort.get": READ,
@@ -520,7 +524,11 @@ def _wants_control(kind: str, op: dict[str, Any]) -> bool:
     legacy and writes no control files (the same lazy discipline the tag ops
     use).
     """
-    return kind in _CONTROL_OPS or any(op.get(field) for field in _CONTROL_FIELDS)
+    return (
+        kind in _CONTROL_OPS
+        or kind == "input.status"
+        or any(op.get(field) for field in _CONTROL_FIELDS)
+    )
 
 
 def _authz_policy(runtime: Any) -> AuthorizationPolicy:
@@ -557,8 +565,12 @@ def _open_control(
 _ARTIFACT_CHUNK_BYTES = 8 * 1024 * 1024
 
 
-def _runtime_capabilities_record() -> dict[str, Any]:
-    """The negotiated runtime surface, derived from the audited op registry."""
+def _runtime_capabilities_record(runtime: Any = None) -> dict[str, Any]:
+    """The negotiated surface plus capabilities installed in this session."""
+    initialized = getattr(runtime, "_initialized", None)
+    coordinator = getattr(initialized, "coordinator", None)
+    resume = coordinator.get_capability("session.resume") if coordinator is not None else None
+    delegate_features = ["delegates.resume"] if callable(resume) else []
     return {
         "schema_version": 1,
         "type": "runtime.capabilities",
@@ -573,11 +585,14 @@ def _runtime_capabilities_record() -> dict[str, Any]:
         },
         "features": [
             "artifact.read.chunked",
+            "input.receipts",
             "history.replay.cursor",
+            "history.navigation.native-conversation",
             "session.attach.unix",
             "session.owner.detached",
             "settings.read.redacted",
             "settings.write.next-session",
+            *delegate_features,
         ],
     }
 
@@ -950,6 +965,66 @@ def _safe_history_metadata(store: Any, session_id: str) -> dict[str, Any]:
             safe_ledger.append(safe_entry)
         result["outcome_ledger"] = safe_ledger
     return result
+
+
+def _history_navigation_record(runtime: Any, op: dict[str, Any]) -> dict[str, Any]:
+    """Return a correlated inspection response without touching live replay state."""
+    import sqlite3
+
+    from filelock import Timeout
+
+    from .history_navigation import (
+        NavigationCursorExpired,
+        NavigationUnavailable,
+        history_outline,
+        history_window,
+    )
+
+    kind = op.get("op")
+    request_id = op.get("request_id")
+    session_id = str(getattr(runtime, "session_id", ""))
+    response: dict[str, Any] = {
+        "schema_version": 1,
+        "type": kind,
+        "session_id": session_id,
+        "request_id": request_id if isinstance(request_id, str) else None,
+    }
+    try:
+        if request_id is not None and (
+            not isinstance(request_id, str) or not request_id or len(request_id) > 128
+        ):
+            response["request_id"] = None
+            raise ValueError("request_id must be a nonempty string of at most 128 characters")
+        store = _serve_store(runtime)
+        if kind == "history.outline":
+            result = history_outline(
+                store, session_id, cursor=op.get("cursor"), limit=op.get("limit", 50)
+            )
+        elif kind == "history.window":
+            result = history_window(
+                store,
+                session_id,
+                event_id=op.get("event_id", ""),
+                generation=op.get("generation"),
+                before=op.get("before", 2),
+                after=op.get("after", 2),
+            )
+        else:
+            raise ValueError("Unknown history navigation operation")
+        return {**response, "ok": True, **result}
+    except NavigationCursorExpired as error:
+        return {**response, "ok": False, "code": "cursor_expired", "error": str(error)}
+    except NavigationUnavailable as error:
+        return {**response, "ok": False, "code": "navigation_unavailable", "error": str(error)}
+    except ValueError as error:
+        return {**response, "ok": False, "code": "invalid_request", "error": str(error)}
+    except (OSError, sqlite3.Error, Timeout):
+        return {
+            **response,
+            "ok": False,
+            "code": "index_unavailable",
+            "error": "History navigation storage is unavailable; retry or use ordinary replay",
+        }
 
 
 def _history_replay_records(runtime: Any, op: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1674,6 +1749,23 @@ async def serve_loop(
 
     pump = asyncio.create_task(_pump())
     turn: asyncio.Task[str] | None = None
+    navigation: asyncio.Task[None] | None = None
+
+    async def _navigate(op: dict[str, Any]) -> None:
+        try:
+            response = await asyncio.to_thread(_history_navigation_record, runtime, op)
+        except Exception:  # noqa: BLE001 — a failed read must not terminate session execution
+            response = {
+                "schema_version": 1,
+                "type": op.get("op"),
+                "session_id": runtime.session_id,
+                "request_id": str(op.get("request_id", ""))[:128],
+                "ok": False,
+                "code": "index_unavailable",
+                "error": "History navigation failed; retry or use ordinary replay",
+            }
+        _emit_raw(out, response)
+
     last_manage_project_plan = False
     last_presentation_capabilities: tuple[str, ...] = ()
 
@@ -1681,6 +1773,107 @@ async def serve_loop(
     # carrying actor|lease|idem) so a legacy client's stream is untouched.
     control: SessionControl | None = None
     policy: AuthorizationPolicy | None = authorization_policy
+    serve_instance = uuid4().hex
+    input_receipts: dict[str, dict[str, Any]] = {}
+    input_actor: dict[str, Any] | None = None
+
+    def _input_id(value: Any) -> str | None:
+        return value if isinstance(value, str) and 0 < len(value) <= 128 else None
+
+    def _input_result(op: dict[str, Any], stage: str, *, code: str | None = None) -> None:
+        """Acknowledge admission only after scheduling or enqueueing succeeds."""
+        idem = _input_id(op.get("idem"))
+        request_id = _input_id(op.get("request_id"))
+        if stage != "rejected" and idem is None and request_id is None:
+            return  # Legacy successful writes retain their existing stream.
+        input_id = idem or f"{serve_instance}:{uuid4().hex}"
+        receipt: dict[str, Any] = {
+            "schema_version": 1,
+            "type": "input.result",
+            "session_id": runtime.session_id,
+            "op": op.get("op"),
+            "request_id": request_id,
+            "idem": idem,
+            "input_id": input_id,
+            "serve_instance": serve_instance,
+            "ok": stage != "rejected",
+            "stage": stage,
+        }
+        if code:
+            receipt["code"] = code
+        records = [receipt]
+        if receipt["ok"]:
+            input_receipts[input_id] = receipt
+            if len(input_receipts) > 256:
+                del input_receipts[next(iter(input_receipts))]
+            if idem and control is not None:
+                records.append(
+                    {
+                        "schema_version": 1,
+                        "type": "control.ack",
+                        "ok": True,
+                        "op": op.get("op"),
+                        "idem": idem,
+                        "session_id": runtime.session_id,
+                        "actor": input_actor,
+                        "input_id": input_id,
+                        "serve_instance": serve_instance,
+                        "stage": stage,
+                    }
+                )
+                control.remember(idem, records)
+        _emit_all(records)
+
+    def _input_status(op: dict[str, Any]) -> dict[str, Any]:
+        """Read an admission receipt without executing or retrying its input."""
+        input_id = _input_id(op.get("input_id"))
+        response: dict[str, Any] = {
+            "schema_version": 1,
+            "type": "input.status",
+            "session_id": runtime.session_id,
+            "request_id": _input_id(op.get("request_id")),
+            "input_id": input_id,
+            "serve_instance": serve_instance,
+            "ok": False,
+            "stage": "unknown",
+            "code": "unknown",
+        }
+        if input_id is None or ("request_id" in op and response["request_id"] is None):
+            response.update(stage="rejected", code="invalid_id")
+            return response
+        saved = input_receipts.get(input_id)
+        if saved is None and control is not None:
+            saved = next(
+                (
+                    r
+                    for r in control.replay(input_id) or []
+                    if r.get("type") == "input.result" and r.get("input_id") == input_id
+                ),
+                None,
+            )
+        if saved is None and ":" in input_id:
+            previous, _, suffix = input_id.partition(":")
+            if (
+                len(previous) == len(suffix) == 32
+                and all(char in "0123456789abcdef" for char in previous + suffix)
+                and previous != serve_instance
+            ):
+                response.update(
+                    stage="unknown_previous_instance",
+                    code="unknown_previous_instance",
+                    original_serve_instance=previous,
+                )
+        if saved is not None:
+            if saved.get("serve_instance") != serve_instance:
+                response.update(
+                    stage="unknown_previous_instance",
+                    code="unknown_previous_instance",
+                    original_serve_instance=saved.get("serve_instance"),
+                )
+            else:
+                response.update(ok=True, stage=saved["stage"], op=saved["op"])
+                response.pop("code")
+        return response
 
     def _policy() -> AuthorizationPolicy:
         """This project's authorization policy, resolved once per connection.
@@ -1744,8 +1937,15 @@ async def serve_loop(
         while True:
             op = await ops.get()
             kind = op.get("op")
+            input_actor = None
             if kind in _META_OPS:
                 break
+
+            if kind in {"submit", "steer"} and any(
+                field in op and _input_id(op[field]) is None for field in ("request_id", "idem")
+            ):
+                _input_result(op, "rejected", code="invalid_id")
+                continue
 
             # -- control plane ------------------------------------------------
             kind_str = str(kind or "")
@@ -1770,6 +1970,9 @@ async def serve_loop(
                     # want a second participant: publish the live endpoint so a
                     # human can attach to THIS runtime rather than boot a rival.
                     await _ensure_attach()
+            if kind in {"submit", "steer"} and op.get("idem") and control is None:
+                _input_result(op, "rejected", code="control_unavailable")
+                continue
             if control is None and kind_str == STATUS_OP:
                 # Status before anyone opted in: answer the runtime half with a
                 # null control block rather than materializing control files.
@@ -1783,6 +1986,8 @@ async def serve_loop(
                 auth = control.authenticate(kind_str, op, OP_PERMISSIONS[kind_str])
                 _emit_all(auth.records)
                 if not auth.allowed:
+                    if kind in {"submit", "steer"}:
+                        _input_result(op, "rejected", code="unauthorized")
                     continue
                 gated = kind_str in _CONTROL_OPS or kind_str in _WRITE_OPS
                 idem = str(op.get("idem", "") or "") if gated else ""
@@ -1815,12 +2020,15 @@ async def serve_loop(
 
                     _emit_all(decision.records)
                     if not decision.allowed:
+                        if kind in {"submit", "steer"}:
+                            _input_result(op, "rejected", code="write_not_authorized")
                         # Deterministically refused (lease_held / not_holder /
                         # lease_expired / session_paused) -- never interleaved.
                         # Rejections are deliberately NOT remembered: a retry
                         # must re-evaluate against the lease as it stands then.
                         continue
-                    if idem:
+                    input_actor = decision.actor.as_dict()
+                    if idem and kind not in {"submit", "steer"}:
                         ack = {
                             "schema_version": 1,
                             "type": "control.ack",
@@ -1834,7 +2042,9 @@ async def serve_loop(
                         control.remember(idem, [ack])
 
             if kind == "runtime.capabilities":
-                _emit_raw(out, _runtime_capabilities_record())
+                _emit_raw(out, _runtime_capabilities_record(runtime))
+            elif kind == "input.status":
+                _emit_raw(out, _input_status(op))
             elif kind == "artifact.read":
                 _emit_raw(out, _artifact_read_record(runtime, op))
             elif kind == "settings.schema":
@@ -1847,11 +2057,16 @@ async def serve_loop(
                 await _emit_status()
             elif kind == "submit":
                 if turn is not None and not turn.done():
-                    continue  # a turn is already running; ignore re-submit
-                text = str(op.get("text", ""))
+                    _input_result(op, "rejected", code="turn_busy")
+                    continue
+                text = op.get("text", "")
+                if not isinstance(text, str):
+                    _input_result(op, "rejected", code="invalid_text")
+                    continue
                 try:
                     attachments = _submit_attachments(op)
                 except ValueError as caught:
+                    _input_result(op, "rejected", code="invalid_attachments")
                     _emit_raw(
                         out,
                         {
@@ -1862,6 +2077,9 @@ async def serve_loop(
                             "error_type": type(caught).__name__,
                         },
                     )
+                    continue
+                if not text.strip() and not attachments:
+                    _input_result(op, "rejected", code="empty_input")
                     continue
                 last_manage_project_plan = op.get("manage_project_plan") is True
                 requested_capabilities = op.get("presentation_capabilities", ())
@@ -1880,6 +2098,7 @@ async def serve_loop(
                         presentation_capabilities=last_presentation_capabilities,
                     )
                 )
+                _input_result(op, "dispatched")
             elif kind == "goal.set":
                 if turn is not None and not turn.done():
                     # Toggle-on during an existing turn: arm the mounted
@@ -1901,18 +2120,15 @@ async def serve_loop(
                 args = "" if kind == "goal.status" else "clear"
                 await _emit_goal_state(runtime, out, args)
             elif kind == "steer":
-                # Mid-turn course correction (additive op). Lands in the SAME
-                # bounded queue the in-process TUI shares with the runtime
-                # (RealRuntime.steering): the StepBoundaryBridge consumes one
-                # steer per provider:request and the runtime itself narrates
-                # the application as a durable "Applying steer: …" block
-                # (kernel/runtime.py _steer_applied). If the final boundary has
-                # already passed, a steer.deferred record explains why the
-                # exact text is becoming a follow-up turn. Bound/empty
-                # violations are dropped silently:
-                # a protocol client enforces the same SteeringQueue limits
-                # locally, so a ValueError here is a client already told.
-                steer_text = str(op.get("text", ""))
+                from ..model.queues import MAX_ITEM_CHARS
+
+                steer_text = op.get("text", "")
+                if not isinstance(steer_text, str) or not steer_text.strip():
+                    _input_result(op, "rejected", code="empty_or_invalid_text")
+                    continue
+                if len(steer_text) > MAX_ITEM_CHARS:
+                    _input_result(op, "rejected", code="text_too_long")
+                    continue
                 if turn is None or turn.done():
                     _emit_raw(
                         out,
@@ -1937,7 +2153,11 @@ async def serve_loop(
                     try:
                         runtime.steering.enqueue(steer_text)
                     except ValueError:
-                        pass
+                        _input_result(op, "rejected", code="queue_rejected")
+                        continue
+                    _input_result(op, "queued")
+                    continue
+                _input_result(op, "dispatched")
             elif kind == "approve":
                 ticket = op.get("ticket_id") or (
                     runtime.broker.head.ticket_id if runtime.broker.head else None
@@ -2028,6 +2248,26 @@ async def serve_loop(
                 # arms to THIS ladder -- each arm is independent, so the
                 # only adjacency is textual (self-contained additive elif).
                 _emit_raw(out, _history_list_record(runtime, op))
+            elif kind in {"history.outline", "history.window"}:
+                # Keep cold index scans off both the event loop and the input
+                # dispatch path. One outstanding read bounds threads and memory.
+                if navigation is not None and not navigation.done():
+                    _emit_raw(
+                        out,
+                        {
+                            "schema_version": 1,
+                            "type": kind,
+                            "session_id": runtime.session_id,
+                            "request_id": str(op.get("request_id", ""))[:128],
+                            "ok": False,
+                            "code": "navigation_busy",
+                            "error": "Another history read is running; retry when it finishes",
+                        },
+                    )
+                else:
+                    if navigation is not None:
+                        await navigation
+                    navigation = asyncio.create_task(_navigate(dict(op)))
             elif kind == "history.replay":
                 # Reattach path (additive READ op): stream the durable UIEvent
                 # ledger so a reconnecting controller or human observes the
@@ -2056,6 +2296,8 @@ async def serve_loop(
                 # response. Same context.state record the pump pushes.
                 _emit_context_state()
     finally:
+        if navigation is not None:
+            await navigation
         # Let an in-flight turn finish (the pump keeps draining its events) so a
         # piped one-shot `submit` completes cleanly on stdin EOF; only then stop
         # the pump and tear down. An interactive client that wants to abort sends
