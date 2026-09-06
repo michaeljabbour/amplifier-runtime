@@ -1565,3 +1565,53 @@ async def test_registered_delegate_resume_remounts_real_core_session(offline_env
         assert record.status == "success"
     finally:
         await runtime.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_gracefully_cancelled_core_child_retains_incomplete_checkpoint(offline_env) -> None:
+    from amplifier_core import HookResult
+    from amplifier_runtime.kernel.delegate_store import DelegateStore
+    from amplifier_runtime.kernel.persistence import SessionStore
+
+    runtime = await _started_runtime(offline_env["project"], mode="auto")
+    ready = asyncio.Event()
+    try:
+        initialized, spawner = runtime._initialized, runtime._spawner
+        assert initialized is not None and spawner is not None
+        factory = spawner._session_factory
+
+        async def on_prompt(event, data):
+            ready.set()
+            return HookResult(action="continue")
+
+        def observed_factory(**kwargs):
+            child = factory(**kwargs)
+            child.coordinator.hooks.register("prompt:submit", on_prompt)
+            return child
+
+        spawner._session_factory = observed_factory
+        child_id = initialized.session_id + "-cancel_probe"
+        task = asyncio.create_task(
+            initialized.coordinator.get_capability("session.spawn")(
+                agent_name="scout",
+                instruction="__B9_LIVE_CANCELLATION_PROBE__",
+                parent_session=initialized.session,
+                sub_session_id=child_id,
+            )
+        )
+        try:
+            await asyncio.wait_for(ready.wait(), 5)
+            assert await runtime.interrupt()
+            with pytest.raises(RuntimeError, match="incomplete"):
+                await asyncio.wait_for(task, 5)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        record = DelegateStore(SessionStore(project_dir=offline_env["project"])).load(
+            child_id, initialized.session_id
+        )
+        assert record.status == "incomplete"
+        assert "cancelled-by-core-token" in record.output
+    finally:
+        await runtime.cleanup()

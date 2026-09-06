@@ -624,7 +624,12 @@ class _ChildToolActivity:
             self.mutation_calls += 1
         elif event == "provider:request" and bool(payload.get("max_reached")):
             self.incomplete = True
-        elif event == "orchestrator:complete" and payload.get("status") == "incomplete":
+        elif event == "cancel:completed":
+            self.incomplete = True
+        elif event == "orchestrator:complete" and payload.get("status") in {
+            "incomplete",
+            "cancelled",
+        }:
             self.incomplete = True
         from amplifier_core import HookResult
 
@@ -638,7 +643,12 @@ class _ChildToolActivity:
                 priority=100,
                 name=f"tui-child-execution-activity-{event.replace(':', '-')}",
             )
-            for event in ("tool:post", "provider:request", "orchestrator:complete")
+            for event in (
+                "tool:post",
+                "provider:request",
+                "orchestrator:complete",
+                "cancel:completed",
+            )
         ]
 
         def unregister_activity() -> None:
