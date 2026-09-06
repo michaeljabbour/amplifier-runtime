@@ -456,6 +456,7 @@ OP_PERMISSIONS: dict[str, str] = {
     "context.get": READ,
     "goal.status": READ,
     "effort.get": READ,
+    "modes.get": READ,
     "tag.list": READ,
     "tag.sessions": READ,
     # -- mutations: everything that changes the session ----------------------
@@ -469,6 +470,8 @@ OP_PERMISSIONS: dict[str, str] = {
     "tag.add": WRITE,
     "tag.remove": WRITE,
     "effort.set": WRITE,
+    "modes.set": WRITE,
+    "model.set": WRITE,
     "effort.cycle": WRITE,
     "settings.apply": WRITE,
     # -- ownership: who holds the pen ----------------------------------------
@@ -1988,6 +1991,18 @@ async def serve_loop(
                 _emit_raw(out, _handle_tag_op(runtime, op))
             elif kind == "interrupt":
                 asyncio.create_task(runtime.interrupt())  # noqa: RUF006 — fire-and-forget
+            elif kind == "modes.get":
+                _emit_raw(out, await mode_state(runtime))
+            elif kind == "modes.set":
+                _emit_raw(
+                    out, await set_modes(runtime, op, busy=turn is not None and not turn.done())
+                )
+            elif kind == "model.set":
+                _emit_raw(
+                    out,
+                    await set_model_record(runtime, op, busy=turn is not None and not turn.done()),
+                )
+                await _emit_effort_state(runtime, out)
             elif kind == "effort.get":
                 # Read-only: reply with the current tier + canonical ring order.
                 await _emit_effort_state(runtime, out)
@@ -2316,3 +2331,121 @@ async def _run_goal(
             leftovers.extend(runtime.steering.drain_steers())
     _emit_raw(out, record)
     return detail
+
+
+async def mode_state(runtime: Any, *, ok: bool = True, detail: str = "") -> dict[str, Any]:
+    try:
+        raw = await runtime.list_native_modes()
+    except Exception:  # noqa: BLE001 - plugin failures must not terminate the session
+        raw = {}
+        ok = False
+        detail = "Could not read the session's modes. Refresh to retry."
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    modes = []
+    entries = raw.get("modes", [])
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+            modes.append(
+                {
+                    "name": entry["name"],
+                    "description": str(entry.get("description", "")),
+                    "source": str(entry.get("source", "")),
+                    "advertised": entry.get("advertised", True) is not False,
+                    "combinable": entry.get("combinable", True) is not False,
+                }
+            )
+    active = raw.get("active_mode")
+    active_many = raw.get("active_modes")
+    capacity = raw.get("max_active", 1)
+    capacity = max(1, min(8, capacity)) if isinstance(capacity, int) else 1
+    return {
+        "schema_version": 1,
+        "type": "modes.state",
+        "session_id": runtime.session_id,
+        "ok": ok,
+        "detail": detail,
+        "modes": modes,
+        "active": active_many
+        if isinstance(active_many, list) and all(isinstance(name, str) for name in active_many)
+        else ([active] if isinstance(active, str) and active else []),
+        "max_active": capacity,
+    }
+
+
+async def set_modes(runtime: Any, op: dict[str, Any], *, busy: bool) -> dict[str, Any]:
+    before = await mode_state(runtime)
+    if not before["ok"]:
+        return before
+    if busy:
+        return {
+            **before,
+            "ok": False,
+            "detail": "Wait for the current turn to finish before changing modes.",
+        }
+    names = op.get("names")
+    if (
+        not isinstance(names, list)
+        or len(names) > before["max_active"]
+        or any(not isinstance(name, str) or not name for name in names)
+    ):
+        return {
+            **before,
+            "ok": False,
+            "detail": f"This mode engine supports up to {before['max_active']} active mode(s). Send a list of names, or an empty list to clear.",
+        }
+    known = {entry["name"] for entry in before["modes"]}
+    if len(set(names)) != len(names) or any(name not in known for name in names):
+        return {
+            **before,
+            "ok": False,
+            "detail": "That mode is not available in this session's bundle.",
+        }
+    try:
+        setter = getattr(runtime, "set_native_modes", None)
+        if callable(setter):
+            ok, detail = await cast(Any, setter)(names)
+        else:
+            ok, detail = await runtime.set_native_mode(names[0] if names else None)
+    except Exception:  # noqa: BLE001 - plugin failures must not terminate the session
+        return await mode_state(
+            runtime,
+            ok=False,
+            detail="Could not apply the mode selection. Refresh to check its state.",
+        )
+    after = await mode_state(runtime, ok=ok, detail=detail)
+    if ok and after["active"] != names:
+        after.update(ok=False, detail="The mode engine did not confirm the requested selection.")
+    return after
+
+
+async def set_model_record(runtime: Any, op: dict[str, Any], *, busy: bool) -> dict[str, Any]:
+    provider, model = op.get("provider"), op.get("model")
+    ok, detail = False, ""
+    if busy:
+        detail = "Wait for the current turn to finish before changing models."
+    elif (
+        not isinstance(provider, str)
+        or not provider.strip()
+        or not isinstance(model, str)
+        or not model.strip()
+    ):
+        detail = "Select a provider and model."
+    else:
+        try:
+            ok, detail = await runtime.set_model(f"{provider.strip()} {model.strip()}")
+        except Exception:  # noqa: BLE001 - plugin failures must not end the runtime
+            detail = "The runtime could not change models."
+    return {
+        "schema_version": 1,
+        "type": "model.state",
+        "session_id": runtime.session_id,
+        "model": runtime.model_name,
+        "ok": ok,
+        "detail": detail,
+    }
