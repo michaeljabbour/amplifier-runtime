@@ -26,6 +26,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Mapping, MutableMapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -1576,6 +1577,30 @@ class ResolvedConfig:
     ``/bundle load`` composes them), never a silent drop."""
 
 
+def preserve_selected_orchestrator(root: Any, composed: Any) -> None:
+    """Keep a directly declared root loop when an app overlay replaces it.
+
+    An explicitly selected execution profile owns its loop. Generic app
+    overlays may include Foundation's default loop as an incidental dependency;
+    composing that after the profile must not silently disable the profile.
+    Inherited root loops and same-module configuration overlays keep ordinary
+    Foundation precedence. Explicit settings overrides still apply afterwards.
+    """
+    orchestrator = root.session.get("orchestrator")
+    if not isinstance(orchestrator, dict) or not orchestrator.get("module"):
+        return
+    module = orchestrator["module"]
+    origins = root.origins.get(f"session.orchestrator:{module}", [])
+    directly_declared = any(
+        origin.bundle == root.name and origin.via_behavior is None for origin in origins
+    ) or (not origins and not root.includes)
+    if not directly_declared:
+        return
+    selected = composed.session.get("orchestrator", {})
+    if selected.get("module") != module:
+        composed.session["orchestrator"] = deepcopy(orchestrator)
+
+
 async def resolve_config(
     bundle: str | None = None,
     *,
@@ -1658,6 +1683,8 @@ async def resolve_config(
             for overlay_uri in overlays
         ]
         composed = root.compose(*overlay_bundles)
+        if bundle is not None:
+            preserve_selected_orchestrator(root, composed)
     else:
         composed = root
 

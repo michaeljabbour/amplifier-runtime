@@ -69,6 +69,11 @@ amplifier-runtime config paths --json
 amplifier-runtime bundle warm foundation
 ```
 
+When `--bundle` explicitly selects a profile that directly declares its own
+orchestrator, app overlays cannot replace it with a different loop. Overlays
+still contribute tools and hooks; inherited loops, same-loop configuration,
+and explicit settings overrides retain their existing precedence.
+
 `serve` is a bidirectional, schema-versioned JSONL protocol on stdio. Clients
 must request history replay after resume or attachment and must preserve the
 single-writer lease: attach to a live owner rather than starting a second host
