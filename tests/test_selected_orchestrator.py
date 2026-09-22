@@ -19,8 +19,8 @@ async def test_selected_loop_survives_app_foundation_overlay(tmp_path: Path) -> 
         "    module: loop-streaming\n    config:\n      max_iterations: 3\n"
         "tools:\n  - module: tool-app\n"
     )
-    root = await load_bundle(str(tmp_path / "profile.yaml"))
-    overlay = await load_bundle(str(tmp_path / "app.yaml"))
+    root = await load_bundle((tmp_path / "profile.yaml").as_uri())
+    overlay = await load_bundle((tmp_path / "app.yaml").as_uri())
     composed = root.compose(overlay)
     assert composed.session["orchestrator"]["module"] == "loop-streaming"
     preserve_selected_orchestrator(root, composed)
@@ -38,11 +38,11 @@ async def test_inherited_loop_remains_replaceable(tmp_path: Path) -> None:
     base = tmp_path / "base.yaml"
     base.write_text("bundle:\n  name: base\nsession:\n  orchestrator:\n    module: base-loop\n")
     profile = tmp_path / "profile.yaml"
-    profile.write_text(f"bundle:\n  name: profile\nincludes:\n  - bundle: {base}\n")
+    profile.write_text(f"bundle:\n  name: profile\nincludes:\n  - bundle: {base.as_uri()}\n")
     overlay = tmp_path / "app.yaml"
     overlay.write_text("bundle:\n  name: app\nsession:\n  orchestrator:\n    module: app-loop\n")
-    root = await load_bundle(str(profile))
-    composed = root.compose(await load_bundle(str(overlay)))
+    root = await load_bundle(profile.as_uri())
+    composed = root.compose(await load_bundle(overlay.as_uri()))
     preserve_selected_orchestrator(root, composed)
     assert composed.session["orchestrator"]["module"] == "app-loop"
 
@@ -59,7 +59,7 @@ async def test_same_loop_overlay_config_still_wins(tmp_path: Path) -> None:
         "bundle:\n  name: app\nsession:\n  orchestrator:\n"
         "    module: same-loop\n    config:\n      max_iterations: 10\n"
     )
-    root = await load_bundle(str(root_path))
-    composed = root.compose(await load_bundle(str(overlay)))
+    root = await load_bundle(root_path.as_uri())
+    composed = root.compose(await load_bundle(overlay.as_uri()))
     preserve_selected_orchestrator(root, composed)
     assert composed.session["orchestrator"]["config"]["max_iterations"] == 10
