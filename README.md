@@ -125,6 +125,16 @@ its formerly local copies are non-executable compatibility history. Studio
 launches this executable directly. Client-specific rendering remains in each
 client repository.
 
+## Delegate and interaction recovery
+
+Delegated children now keep private, versioned checkpoints and bounded partial output.
+Resume them through their owning parent; expired ephemeral children remain
+non-resumable. See [delegate recovery](docs/delegate-recovery.md) for ownership,
+credential refresh, cancellation, and compatibility requirements, and
+[interaction recovery](docs/interaction-recovery.md) for question and approval
+identity guarantees. [Routing discovery](docs/notes/routing-matrix-discovery.md)
+explains filename identity and shadowed matrix candidates.
+
 ## Development
 
 ```sh

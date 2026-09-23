@@ -822,18 +822,27 @@ async def test_an_abandoned_lease_expires_so_the_session_is_never_locked(
     """AC5's hard edge: the controller vanishes mid-session holding the lease.
     Writes are refused while it is live, and freed the moment it expires --
     no unlock request, no operator intervention."""
-    controller = _Connection(runtime)
+    from amplifier_runtime.kernel.session_control import SessionControl
+
+    now = 100.0
+
+    def control() -> SessionControl:
+        return SessionControl(
+            runtime.store.session_dir(runtime.session_id), runtime.session_id, now=lambda: now
+        )
+
+    controller = _Connection(runtime, control_factory=control)
     controller.send(op="lease.acquire", actor=BOT, ttl=0.2)
     await controller.wait(lambda: controller.out.find("lease.state") is not None)
     await controller.drop()  # dropped without releasing
 
-    human = _Connection(runtime)
+    human = _Connection(runtime, control_factory=control)
     human.send(op="submit", text="too early", actor=MJ)
     await human.wait(lambda: human.out.find("control.conflict") is not None)
     assert human.out.conflicts()[0]["reason"] == REASON_LEASE_HELD
     assert runtime.submits == []
 
-    await asyncio.sleep(0.25)  # the lease TTL elapses with nobody heartbeating
+    now += 0.25  # Advance lease time independently of host scheduling.
     human.send(op="submit", text="now mine", actor=MJ)
     await human.wait(lambda: human.out.find("turn.completed") is not None)
     assert await human.drop() == 0

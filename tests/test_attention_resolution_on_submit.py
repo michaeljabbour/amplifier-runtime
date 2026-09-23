@@ -11,11 +11,13 @@ inline at 20:52:05, written up by the agent to a decisions file by 21:06 -- and
 all four still sitting in ``attention.json`` as unacknowledged under
 ``reason: "awaiting_clarification"`` when the session ended hours later.
 
-Submitting a prompt is the strongest available evidence that the wait is over.
+A prompt acknowledges inferred attention only when no structured question or
+approval still requires an explicit response.
 """
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from pathlib import Path
 from typing import Any
@@ -146,3 +148,46 @@ def test_submit_resolves_attention_before_it_marks_the_turn_executing() -> None:
     resolve_at = source.index("_resolve_pending_attention")
     executing_at = source.index("self._executing = True")
     assert resolve_at < executing_at
+
+
+@pytest.mark.asyncio
+async def test_submit_preserves_attention_for_an_unanswered_structured_question(
+    tmp_path: Path,
+) -> None:
+    _pending(tmp_path)
+    runtime, hooks = _runtime(tmp_path)
+    first = runtime.needs_you.defer("Which build?", choices=("custom", "off the shelf"))
+    second = runtime.needs_you.defer("Which color?", choices=("blue", "green"))
+
+    assert await runtime._resolve_pending_attention() is None
+    runtime.needs_you.answer(first.decision_id, "custom")
+    assert await runtime._resolve_pending_attention() is None
+    assert [item.decision_id for item in runtime.needs_you.pending] == [second.decision_id]
+    by_id, _ = AttentionStore(tmp_path).load()
+    assert not by_id["decision-1"].acknowledged
+    assert hooks.emitted == []
+
+    runtime.needs_you.answer(second.decision_id, "blue")
+    assert await runtime._resolve_pending_attention() == "decision-1"
+
+
+@pytest.mark.asyncio
+async def test_submit_does_not_acknowledge_a_live_approval(tmp_path: Path) -> None:
+    _pending(tmp_path)
+    runtime, hooks = _runtime(tmp_path)
+    presented = asyncio.Event()
+    remove = runtime.broker.add_listener(presented.set)
+    request = asyncio.create_task(runtime.broker.request_approval("Publish the release?"))
+    try:
+        await asyncio.wait_for(presented.wait(), timeout=1)
+        assert await runtime._resolve_pending_attention() is None
+        assert not request.done()
+        assert runtime.broker.head is not None
+        by_id, _ = AttentionStore(tmp_path).load()
+        assert not by_id["decision-1"].acknowledged
+        assert hooks.emitted == []
+    finally:
+        remove()
+        request.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await request

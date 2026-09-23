@@ -605,9 +605,9 @@ def fork(
     child via ``session.spawn`` — over tui's persisted session store. True
     detached/background execution is NOT reachable from the full-screen TUI host
     (the same terminal-host seam gap deferred in #45's ``/background``); the
-    in-process spawner runs children ephemerally (persist-nothing), so it cannot
-    hand back a resumable child. The reachable member is therefore a primed,
-    resumable child rather than a background daemon.
+    in-process spawner keeps delegated checkpoints but does not own a detached
+    background host. This operation therefore creates a primed, resumable
+    top-level branch rather than starting a background daemon.
 
     Returns ``(ok, child_id_or_reason)``. An empty directive, a malformed
     ``name``, or a write failure returns ``(False, reason)``.

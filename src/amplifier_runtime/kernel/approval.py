@@ -36,6 +36,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -102,7 +103,9 @@ class ApprovalBroker:
     """FIFO approval request broker (kernel ApprovalSystem implementation).
 
     The inline approval bar answers :attr:`head`; ctrl-y calls :meth:`defer`.
-    UI listeners fire on every queue change.
+    UI listeners fire on every queue change. Ticket IDs belong to this broker
+    instance, so an earlier runtime's reply cannot approve a new tool call.
+    Live approval futures are not restored after process death.
 
     """
 
@@ -122,6 +125,7 @@ class ApprovalBroker:
         the kernel's default (300s) silently timed approvals out to deny
         while the supervisor was still reading the plan (found live —
         every file write of a run 'came back denied' untouched)."""
+        self._request_namespace = uuid4().hex
         self._next_id = 1
         self._tickets: list[ApprovalTicket] = []
         self._staged: dict[str, deque[ApprovalDetail]] = {}
@@ -182,7 +186,7 @@ class ApprovalBroker:
         # receives the choice string back and stops asking. A second
         # remember table here would shadow the native one.
         ticket = ApprovalTicket(
-            ticket_id=f"approval-{self._next_id}",
+            ticket_id=f"approval-{self._request_namespace}-{self._next_id}",
             prompt=prompt,
             options=presented_options(options or ()),
             detail=detail,
@@ -217,10 +221,11 @@ class ApprovalBroker:
         ``ValueError`` for a choice not among the presented options.
         """
         ticket = self._find(ticket_id)
+        if ticket.future.done():
+            raise KeyError(f"approval ticket is already resolved: {ticket_id}")
         if choice not in ticket.options:
             raise ValueError(f"choice {choice!r} is not one of {ticket.options}")
-        if not ticket.future.done():
-            ticket.future.set_result(choice)
+        ticket.future.set_result(choice)
 
     def defer(self, ticket_id: str) -> NeedsYouItem | None:
         """Park a ticket for later and deny the current call immediately.
