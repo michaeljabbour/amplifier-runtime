@@ -23,6 +23,11 @@ The TUI baseline currently pins runtime 0.1.10; the isolated canonical runtime s
 
 ## Retirement remains a separate action
 
+The later [replay-envelope check](evaluations/2026-10-28-replay-contract.md)
+records a concrete omission in the new exported schema and its bounded
+correction. The production replay producer remains unchanged; a generated
+contract must describe the records that actually execute.
+
 No original body, repository, branch, user session or data store was removed. The disposable no-body test improves readiness to remove inert package copies, but removal still needs package/file consumer inventory and supported-client acceptance. Keep compatibility import paths and the owner implementation. Preserve distinct UI experiments until their useful behavior is compared and harvested deliberately. No archive, visibility change, push or publication occurred here.
 
 Foundation/Core and intentionally modular data/storage remain separate foundational owners. A required private/local foundation is an install/access boundary to document, not evidence that it is valueless or should be folded into a skill or UI.

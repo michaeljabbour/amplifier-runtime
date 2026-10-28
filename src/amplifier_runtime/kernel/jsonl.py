@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated, Literal, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .events import UIEvent
 
@@ -47,6 +47,31 @@ class RuntimeEvent(_Record):
 
     type: Literal["runtime.event"] = "runtime.event"
     event: UIEvent
+
+
+class ReplayedRuntimeEvent(BaseModel):
+    """Existing serve replay envelope, sequenced by durable ledger index.
+
+    Replay preserves the ledger event's numeric timestamp (or the legacy
+    empty-string fallback), unlike the one-shot factory's ISO timestamp.
+    This model describes that wire format without changing the producer.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_version: Literal[1] = JSONL_SCHEMA_VERSION
+    type: Literal["runtime.event"] = "runtime.event"
+    replay: Literal[True]
+    sequence: int = Field(ge=1)
+    timestamp: float | str
+    event: UIEvent
+
+    @field_validator("replay", mode="before")
+    @classmethod
+    def _literal_replay_flag(cls, value: object) -> object:
+        if value is not True:
+            raise ValueError("Replay envelope requires replay: true")
+        return value
 
 
 class TurnCompleted(_Record):
@@ -128,6 +153,7 @@ __all__ = [
     "JSONL_SCHEMA_VERSION",
     "JsonlRecord",
     "JsonlRecords",
+    "ReplayedRuntimeEvent",
     "RunError",
     "RuntimeEvent",
     "SessionStarted",

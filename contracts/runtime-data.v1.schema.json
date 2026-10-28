@@ -1783,6 +1783,223 @@
       "title": "ProviderResponseUsage",
       "type": "object"
     },
+    "ReplayedRuntimeEvent": {
+      "additionalProperties": false,
+      "description": "Existing serve replay envelope, sequenced by durable ledger index.\n\nReplay preserves the ledger event's numeric timestamp (or the legacy\nempty-string fallback), unlike the one-shot factory's ISO timestamp.\nThis model describes that wire format without changing the producer.",
+      "properties": {
+        "event": {
+          "discriminator": {
+            "mapping": {
+              "agent_completed": "#/$defs/AgentCompleted",
+              "agent_resumed": "#/$defs/AgentResumed",
+              "agent_spawned": "#/$defs/AgentSpawned",
+              "approval_denied": "#/$defs/ApprovalDenied",
+              "approval_granted": "#/$defs/ApprovalGranted",
+              "approval_required": "#/$defs/ApprovalRequired",
+              "artifact_write": "#/$defs/ArtifactWrite",
+              "cancel_completed": "#/$defs/CancelCompleted",
+              "cancel_requested": "#/$defs/CancelRequested",
+              "content_block_end": "#/$defs/ContentBlockEnd",
+              "content_block_start": "#/$defs/ContentBlockStart",
+              "context_compacted": "#/$defs/ContextCompacted",
+              "context_injected": "#/$defs/ContextInjected",
+              "decision_answered": "#/$defs/DecisionAnswered",
+              "decision_applied": "#/$defs/DecisionApplied",
+              "execution_end": "#/$defs/ExecutionEnd",
+              "execution_start": "#/$defs/ExecutionStart",
+              "goal_progress": "#/$defs/GoalProgress",
+              "notification": "#/$defs/Notification",
+              "orchestrator_complete": "#/$defs/OrchestratorComplete",
+              "pipeline_checkpoint": "#/$defs/PipelineCheckpoint",
+              "pipeline_complete": "#/$defs/PipelineComplete",
+              "pipeline_progress": "#/$defs/PipelineProgress",
+              "pipeline_started": "#/$defs/PipelineStarted",
+              "prompt_complete": "#/$defs/PromptComplete",
+              "prompt_submit": "#/$defs/PromptSubmit",
+              "provider_notice": "#/$defs/ProviderNotice",
+              "provider_response_usage": "#/$defs/ProviderResponseUsage",
+              "rewind_marker": "#/$defs/RewindMarker",
+              "session_end": "#/$defs/SessionEnd",
+              "session_fork": "#/$defs/SessionFork",
+              "session_resume": "#/$defs/SessionResume",
+              "session_start": "#/$defs/SessionStart",
+              "stream_aborted": "#/$defs/StreamAborted",
+              "stream_block_delta": "#/$defs/StreamBlockDelta",
+              "stream_block_end": "#/$defs/StreamBlockEnd",
+              "stream_block_start": "#/$defs/StreamBlockStart",
+              "tool_error": "#/$defs/ToolError",
+              "tool_post": "#/$defs/ToolPost",
+              "tool_pre": "#/$defs/ToolPre"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/StreamBlockStart"
+            },
+            {
+              "$ref": "#/$defs/StreamBlockDelta"
+            },
+            {
+              "$ref": "#/$defs/StreamBlockEnd"
+            },
+            {
+              "$ref": "#/$defs/StreamAborted"
+            },
+            {
+              "$ref": "#/$defs/ToolPre"
+            },
+            {
+              "$ref": "#/$defs/ToolPost"
+            },
+            {
+              "$ref": "#/$defs/ToolError"
+            },
+            {
+              "$ref": "#/$defs/ContentBlockStart"
+            },
+            {
+              "$ref": "#/$defs/ContentBlockEnd"
+            },
+            {
+              "$ref": "#/$defs/OrchestratorComplete"
+            },
+            {
+              "$ref": "#/$defs/GoalProgress"
+            },
+            {
+              "$ref": "#/$defs/PipelineStarted"
+            },
+            {
+              "$ref": "#/$defs/PipelineProgress"
+            },
+            {
+              "$ref": "#/$defs/PipelineCheckpoint"
+            },
+            {
+              "$ref": "#/$defs/PipelineComplete"
+            },
+            {
+              "$ref": "#/$defs/PromptSubmit"
+            },
+            {
+              "$ref": "#/$defs/PromptComplete"
+            },
+            {
+              "$ref": "#/$defs/ExecutionStart"
+            },
+            {
+              "$ref": "#/$defs/ExecutionEnd"
+            },
+            {
+              "$ref": "#/$defs/ProviderResponseUsage"
+            },
+            {
+              "$ref": "#/$defs/ProviderNotice"
+            },
+            {
+              "$ref": "#/$defs/SessionStart"
+            },
+            {
+              "$ref": "#/$defs/SessionEnd"
+            },
+            {
+              "$ref": "#/$defs/SessionFork"
+            },
+            {
+              "$ref": "#/$defs/SessionResume"
+            },
+            {
+              "$ref": "#/$defs/RewindMarker"
+            },
+            {
+              "$ref": "#/$defs/ApprovalRequired"
+            },
+            {
+              "$ref": "#/$defs/ApprovalGranted"
+            },
+            {
+              "$ref": "#/$defs/ApprovalDenied"
+            },
+            {
+              "$ref": "#/$defs/DecisionAnswered"
+            },
+            {
+              "$ref": "#/$defs/DecisionApplied"
+            },
+            {
+              "$ref": "#/$defs/CancelRequested"
+            },
+            {
+              "$ref": "#/$defs/CancelCompleted"
+            },
+            {
+              "$ref": "#/$defs/AgentSpawned"
+            },
+            {
+              "$ref": "#/$defs/AgentCompleted"
+            },
+            {
+              "$ref": "#/$defs/AgentResumed"
+            },
+            {
+              "$ref": "#/$defs/Notification"
+            },
+            {
+              "$ref": "#/$defs/ContextInjected"
+            },
+            {
+              "$ref": "#/$defs/ContextCompacted"
+            },
+            {
+              "$ref": "#/$defs/ArtifactWrite"
+            }
+          ],
+          "title": "Event"
+        },
+        "replay": {
+          "const": true,
+          "title": "Replay",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "timestamp": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Timestamp"
+        },
+        "type": {
+          "const": "runtime.event",
+          "default": "runtime.event",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "replay",
+        "sequence",
+        "timestamp",
+        "event"
+      ],
+      "title": "ReplayedRuntimeEvent",
+      "type": "object"
+    },
     "RewindMarker": {
       "additionalProperties": false,
       "description": "A confirmed rewind boundary, persisted to the append-only log.\n\nThe ui-events log never truncates, so a resume would otherwise replay\nthe turns a rewind discarded (ghost turns). This marker is written to\nthe log at fork time (never a raw hook \u2014 the app synthesizes it) and\nhonored at read time by :func:`drop_rewound_events`: everything after\nthe ``kept_turns``-th surviving turn, up to this marker, is dropped\nbefore the events reach the reducer.\n\n- ``checkpoint_id``: the rewind target (``t2`` \u2026), for diagnostics.\n- ``kept_turns``: how many ``prompt_submit``-delimited turns survive\n  from the start of the reconstructed timeline (the target's 1-indexed\n  ledger position at fork time \u2014 which equals its position in the\n  ghost-filtered replay, one checkpoint per completed turn).",
@@ -2810,27 +3027,34 @@
   },
   "$id": "urn:amplifier:runtime-data:v1",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "discriminator": {
-    "mapping": {
-      "error": "#/$defs/RunError",
-      "runtime.event": "#/$defs/RuntimeEvent",
-      "session.started": "#/$defs/SessionStarted",
-      "turn.completed": "#/$defs/TurnCompleted"
-    },
-    "propertyName": "type"
-  },
-  "oneOf": [
+  "anyOf": [
     {
-      "$ref": "#/$defs/SessionStarted"
+      "discriminator": {
+        "mapping": {
+          "error": "#/$defs/RunError",
+          "runtime.event": "#/$defs/RuntimeEvent",
+          "session.started": "#/$defs/SessionStarted",
+          "turn.completed": "#/$defs/TurnCompleted"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SessionStarted"
+        },
+        {
+          "$ref": "#/$defs/RuntimeEvent"
+        },
+        {
+          "$ref": "#/$defs/TurnCompleted"
+        },
+        {
+          "$ref": "#/$defs/RunError"
+        }
+      ]
     },
     {
-      "$ref": "#/$defs/RuntimeEvent"
-    },
-    {
-      "$ref": "#/$defs/TurnCompleted"
-    },
-    {
-      "$ref": "#/$defs/RunError"
+      "$ref": "#/$defs/ReplayedRuntimeEvent"
     }
   ]
 }

@@ -14,9 +14,9 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from .kernel.jsonl import JSONL_SCHEMA_VERSION, JsonlRecord
+from .kernel.jsonl import JSONL_SCHEMA_VERSION, JsonlRecord, ReplayedRuntimeEvent
 
-_DATA_ADAPTER = TypeAdapter(JsonlRecord)
+_DATA_ADAPTER = TypeAdapter(JsonlRecord | ReplayedRuntimeEvent)
 
 
 def data_schema() -> dict[str, Any]:
@@ -31,7 +31,9 @@ def validate_data_record(record: dict[str, Any]) -> Any:
     """Validate a normalized data record; reject control/raw-hook substitutions.
 
     This is a consumer boundary, not permission enforcement. Stream and durable
-    events retain their distinct types. Approval replies still go to the runtime
+    events retain their distinct types. Replayed events retain their ledger
+    sequence and replay flag rather than masquerading as live records.
+    Approval replies still go to the runtime
     broker/control plane; a visible approval event does not grant authority.
     """
     version = record.get("schema_version")
