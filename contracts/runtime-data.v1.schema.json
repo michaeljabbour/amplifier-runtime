@@ -1,0 +1,2836 @@
+{
+  "$defs": {
+    "AgentCompleted": {
+      "additionalProperties": false,
+      "description": "A subagent finished (``task:agent_completed`` / ``task:completed``).",
+      "properties": {
+        "agent": {
+          "default": "",
+          "title": "Agent",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "incomplete": {
+          "default": false,
+          "title": "Incomplete",
+          "type": "boolean"
+        },
+        "kind": {
+          "const": "agent_completed",
+          "default": "agent_completed",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "parent_session_id": {
+          "default": "",
+          "title": "Parent Session Id",
+          "type": "string"
+        },
+        "result": {
+          "default": "",
+          "title": "Result",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "sub_session_id": {
+          "default": "",
+          "title": "Sub Session Id",
+          "type": "string"
+        },
+        "success": {
+          "default": true,
+          "title": "Success",
+          "type": "boolean"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "AgentCompleted",
+      "type": "object"
+    },
+    "AgentResumed": {
+      "additionalProperties": false,
+      "description": "A subagent lane reopened (``delegate:agent_resumed``).\n\nThe resume payload carries only the child ``session_id`` (already the\nenvelope's own field) and ``parent_session_id`` -- no ``agent`` name.\nThat's intentional: the lane already exists from the original spawn\nevent, keyed by ``sub_session_id``, so there's nothing new to key on\nhere and ``agent`` is left empty rather than guessed.",
+      "properties": {
+        "agent": {
+          "default": "",
+          "title": "Agent",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "agent_resumed",
+          "default": "agent_resumed",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "parent_session_id": {
+          "default": "",
+          "title": "Parent Session Id",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "AgentResumed",
+      "type": "object"
+    },
+    "AgentSpawned": {
+      "additionalProperties": false,
+      "description": "A subagent lane opened (``task:agent_spawned`` / ``task:spawned``).",
+      "properties": {
+        "agent": {
+          "default": "",
+          "title": "Agent",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "agent_spawned",
+          "default": "agent_spawned",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "parent_session_id": {
+          "default": "",
+          "title": "Parent Session Id",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "sub_session_id": {
+          "default": "",
+          "title": "Sub Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "AgentSpawned",
+      "type": "object"
+    },
+    "ApprovalDenied": {
+      "additionalProperties": false,
+      "description": "An approval was denied (``approval:denied``).\n\n``command`` is the blocked thing for the \u2298 line (falls back to\n``prompt``); ``continuation`` is the deny-and-continue note\n(DESIGN-SPEC \u00a77: ``continuing without <thing>``).",
+      "properties": {
+        "command": {
+          "default": "",
+          "title": "Command",
+          "type": "string"
+        },
+        "continuation": {
+          "default": "",
+          "title": "Continuation",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "approval_denied",
+          "default": "approval_denied",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ApprovalDenied",
+      "type": "object"
+    },
+    "ApprovalGranted": {
+      "additionalProperties": false,
+      "properties": {
+        "choice": {
+          "default": "",
+          "title": "Choice",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "approval_granted",
+          "default": "approval_granted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ApprovalGranted",
+      "type": "object"
+    },
+    "ApprovalRequired": {
+      "additionalProperties": false,
+      "description": "An approval is being requested (``approval:required``).\n\n``options`` always contains the verbatim strings ``Allow once`` /\n``Allow always`` / ``Deny`` (Rust fail-closed string matching).",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "approval_required",
+          "default": "approval_required",
+          "title": "Kind",
+          "type": "string"
+        },
+        "options": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Options",
+          "type": "array"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ApprovalRequired",
+      "type": "object"
+    },
+    "ArtifactWrite": {
+      "additionalProperties": false,
+      "description": "A tool wrote a file to disk (``artifact:write``).\n\nEmitted by ``amplifier-module-tool-filesystem`` from both ``write`` and\n``edit`` with ``{\"path\": ..., \"bytes\": ...}``. It was never bridged, so\nfiles written during a turn were invisible in the client -- the TUI's own\ncanary logged ``unbridged event kind - artifact:write`` 15 times in session\n``eec9ae98``, while the user was asking where the files had gone.",
+      "properties": {
+        "bytes_written": {
+          "default": 0,
+          "title": "Bytes Written",
+          "type": "integer"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "artifact_write",
+          "default": "artifact_write",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ArtifactWrite",
+      "type": "object"
+    },
+    "CancelCompleted": {
+      "additionalProperties": false,
+      "description": "Interrupt landed at a step boundary (``cancel:completed``).",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "cancel_completed",
+          "default": "cancel_completed",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "CancelCompleted",
+      "type": "object"
+    },
+    "CancelRequested": {
+      "additionalProperties": false,
+      "description": "Interrupt requested (``cancel:requested``) \u2014 esc while running.",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "cancel_requested",
+          "default": "cancel_requested",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "CancelRequested",
+      "type": "object"
+    },
+    "ContentBlockEnd": {
+      "additionalProperties": false,
+      "description": "Durable content block record (``content_block:end``) \u2014 the atomic,\nnon-incremental source of truth for answer/thinking text.",
+      "properties": {
+        "block": {
+          "additionalProperties": true,
+          "title": "Block",
+          "type": "object"
+        },
+        "block_index": {
+          "default": 0,
+          "title": "Block Index",
+          "type": "integer"
+        },
+        "block_type": {
+          "default": "text",
+          "title": "Block Type",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "content_block_end",
+          "default": "content_block_end",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "total_blocks": {
+          "default": 0,
+          "title": "Total Blocks",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "usage": {
+          "additionalProperties": true,
+          "title": "Usage",
+          "type": "object"
+        }
+      },
+      "title": "ContentBlockEnd",
+      "type": "object"
+    },
+    "ContentBlockStart": {
+      "additionalProperties": false,
+      "description": "Durable content block opened (``content_block:start``).",
+      "properties": {
+        "block_index": {
+          "default": 0,
+          "title": "Block Index",
+          "type": "integer"
+        },
+        "block_type": {
+          "default": "text",
+          "title": "Block Type",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "content_block_start",
+          "default": "content_block_start",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "total_blocks": {
+          "default": 0,
+          "title": "Total Blocks",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ContentBlockStart",
+      "type": "object"
+    },
+    "ContextCompacted": {
+      "additionalProperties": false,
+      "description": "The mounted context compacted its request view.",
+      "properties": {
+        "after_messages": {
+          "default": 0,
+          "title": "After Messages",
+          "type": "integer"
+        },
+        "after_tokens": {
+          "default": 0,
+          "title": "After Tokens",
+          "type": "integer"
+        },
+        "before_messages": {
+          "default": 0,
+          "title": "Before Messages",
+          "type": "integer"
+        },
+        "before_tokens": {
+          "default": 0,
+          "title": "Before Tokens",
+          "type": "integer"
+        },
+        "budget": {
+          "default": 0,
+          "title": "Budget",
+          "type": "integer"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "context_compacted",
+          "default": "context_compacted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "messages_removed": {
+          "default": 0,
+          "title": "Messages Removed",
+          "type": "integer"
+        },
+        "messages_truncated": {
+          "default": 0,
+          "title": "Messages Truncated",
+          "type": "integer"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "strategy_level": {
+          "default": 0,
+          "title": "Strategy Level",
+          "type": "integer"
+        },
+        "target_tokens": {
+          "default": 0,
+          "title": "Target Tokens",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "user_messages_stubbed": {
+          "default": 0,
+          "title": "User Messages Stubbed",
+          "type": "integer"
+        }
+      },
+      "title": "ContextCompacted",
+      "type": "object"
+    },
+    "ContextInjected": {
+      "additionalProperties": false,
+      "description": "A persistent user-role context message was injected mid-turn.\n\nEmitted by the runtime when the StepBoundaryBridge applies a steer\nand/or answered deferred decisions (one combined injection message\nper step boundary). Foundation's fork slicing counts EVERY user-role\nmessage as a turn boundary, so checkpoint turn ids must advance past\nthese injections (DESIGN-SPEC \u00a79).",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "context_injected",
+          "default": "context_injected",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "source": {
+          "default": "steering",
+          "title": "Source",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ContextInjected",
+      "type": "object"
+    },
+    "DecisionAnswered": {
+      "additionalProperties": false,
+      "description": "A deferred decision answer was accepted into the runtime queue.",
+      "properties": {
+        "answer": {
+          "default": "",
+          "title": "Answer",
+          "type": "string"
+        },
+        "decision_id": {
+          "default": "",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "decision_answered",
+          "default": "decision_answered",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "question": {
+          "default": "",
+          "title": "Question",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "DecisionAnswered",
+      "type": "object"
+    },
+    "DecisionApplied": {
+      "additionalProperties": false,
+      "description": "An accepted decision reached a provider step boundary.",
+      "properties": {
+        "answer": {
+          "default": "",
+          "title": "Answer",
+          "type": "string"
+        },
+        "decision_id": {
+          "default": "",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "decision_applied",
+          "default": "decision_applied",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "question": {
+          "default": "",
+          "title": "Question",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "DecisionApplied",
+      "type": "object"
+    },
+    "ExecutionEnd": {
+      "additionalProperties": false,
+      "description": "Engine execution ended (``execution:end``).",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "execution_end",
+          "default": "execution_end",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ExecutionEnd",
+      "type": "object"
+    },
+    "ExecutionStart": {
+      "additionalProperties": false,
+      "description": "Engine execution started (``execution:start``).",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "execution_start",
+          "default": "execution_start",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ExecutionStart",
+      "type": "object"
+    },
+    "GoalProgress": {
+      "additionalProperties": false,
+      "description": "Native ``loop-streaming`` goal-loop progress.\n\nThe schema is emitted by Amplifier's orchestrator.  The TUI preserves\nits fields for durable replay and only renders them; it never evaluates\nthe goal or decides whether another turn should run.",
+      "properties": {
+        "cap": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cap"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Condition"
+        },
+        "continuations": {
+          "default": 0,
+          "title": "Continuations",
+          "type": "integer"
+        },
+        "distinct_blockers": {
+          "default": 0,
+          "title": "Distinct Blockers",
+          "type": "integer"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "goal_progress",
+          "default": "goal_progress",
+          "title": "Kind",
+          "type": "string"
+        },
+        "orchestrator": {
+          "default": "",
+          "title": "Orchestrator",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "reasons": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Reasons",
+          "type": "array"
+        },
+        "schema_version": {
+          "default": 0,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "stall_detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stall Detail"
+        },
+        "stall_verdict": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stall Verdict"
+        },
+        "state": {
+          "default": "",
+          "title": "State",
+          "type": "string"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "turn": {
+          "default": 0,
+          "title": "Turn",
+          "type": "integer"
+        }
+      },
+      "title": "GoalProgress",
+      "type": "object"
+    },
+    "Notification": {
+      "additionalProperties": false,
+      "description": "User-facing notice (``user:notification``) \u2192 transient notice slot.",
+      "properties": {
+        "action": {
+          "default": "",
+          "title": "Action",
+          "type": "string"
+        },
+        "choices": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Choices",
+          "type": "array"
+        },
+        "custom": {
+          "default": false,
+          "title": "Custom",
+          "type": "boolean"
+        },
+        "decision_id": {
+          "default": "",
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "descriptions": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Descriptions",
+          "type": "array"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "highlight": {
+          "default": "",
+          "title": "Highlight",
+          "type": "string"
+        },
+        "kind": {
+          "const": "notification",
+          "default": "notification",
+          "title": "Kind",
+          "type": "string"
+        },
+        "level": {
+          "default": "info",
+          "title": "Level",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "multiple": {
+          "default": false,
+          "title": "Multiple",
+          "type": "boolean"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "question": {
+          "default": "",
+          "title": "Question",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "source": {
+          "default": "",
+          "title": "Source",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "Notification",
+      "type": "object"
+    },
+    "OrchestratorComplete": {
+      "additionalProperties": false,
+      "description": "The orchestrator loop ended (``orchestrator:complete``).",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "orchestrator_complete",
+          "default": "orchestrator_complete",
+          "title": "Kind",
+          "type": "string"
+        },
+        "orchestrator": {
+          "default": "",
+          "title": "Orchestrator",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "success",
+          "enum": [
+            "success",
+            "cancelled",
+            "incomplete"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "turn_count": {
+          "default": 0,
+          "title": "Turn Count",
+          "type": "integer"
+        }
+      },
+      "title": "OrchestratorComplete",
+      "type": "object"
+    },
+    "PipelineCheckpoint": {
+      "additionalProperties": false,
+      "description": "Attractor persisted restart state after a node (``pipeline:checkpoint``).",
+      "properties": {
+        "branch_id": {
+          "default": "",
+          "title": "Branch Id",
+          "type": "string"
+        },
+        "checkpoint_path": {
+          "default": "",
+          "title": "Checkpoint Path",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pipeline_checkpoint",
+          "default": "pipeline_checkpoint",
+          "title": "Kind",
+          "type": "string"
+        },
+        "node_id": {
+          "default": "",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "PipelineCheckpoint",
+      "type": "object"
+    },
+    "PipelineComplete": {
+      "additionalProperties": false,
+      "description": "A DOT pipeline reached its terminal outcome (``pipeline:complete``).",
+      "properties": {
+        "branch_id": {
+          "default": "",
+          "title": "Branch Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0.0,
+          "title": "Duration Ms",
+          "type": "number"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pipeline_complete",
+          "default": "pipeline_complete",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "",
+          "title": "Status",
+          "type": "string"
+        },
+        "total_nodes_executed": {
+          "default": 0,
+          "title": "Total Nodes Executed",
+          "type": "integer"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "PipelineComplete",
+      "type": "object"
+    },
+    "PipelineProgress": {
+      "additionalProperties": false,
+      "description": "One durable node or edge transition in a running DOT pipeline.\n\nAttractor publishes three raw event names for graph mutation. They share\nthis typed record so protocol clients can fold one ordered stream into\ngraph state without retaining upstream hook payloads.",
+      "properties": {
+        "attempt": {
+          "default": 0,
+          "title": "Attempt",
+          "type": "integer"
+        },
+        "branch_id": {
+          "default": "",
+          "title": "Branch Id",
+          "type": "string"
+        },
+        "duration_ms": {
+          "default": 0.0,
+          "title": "Duration Ms",
+          "type": "number"
+        },
+        "edge_label": {
+          "default": "",
+          "title": "Edge Label",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "execution_index": {
+          "default": 0,
+          "title": "Execution Index",
+          "type": "integer"
+        },
+        "failure_reason": {
+          "default": "",
+          "title": "Failure Reason",
+          "type": "string"
+        },
+        "from_node": {
+          "default": "",
+          "title": "From Node",
+          "type": "string"
+        },
+        "handler_type": {
+          "default": "",
+          "title": "Handler Type",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pipeline_progress",
+          "default": "pipeline_progress",
+          "title": "Kind",
+          "type": "string"
+        },
+        "node_id": {
+          "default": "",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "node_session_id": {
+          "default": "",
+          "title": "Node Session Id",
+          "type": "string"
+        },
+        "notes": {
+          "default": "",
+          "title": "Notes",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "phase": {
+          "enum": [
+            "node_started",
+            "node_completed",
+            "edge_selected"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "",
+          "title": "Status",
+          "type": "string"
+        },
+        "to_node": {
+          "default": "",
+          "title": "To Node",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "via_parallel": {
+          "default": false,
+          "title": "Via Parallel",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "phase"
+      ],
+      "title": "PipelineProgress",
+      "type": "object"
+    },
+    "PipelineStarted": {
+      "additionalProperties": false,
+      "description": "A DOT pipeline began (``pipeline:start``).\n\n``dot_source`` deliberately rides inline: it is the immutable graph\ndefinition needed to rebuild a visual pipeline after ``history.replay``;\nlater progress records only mutate node/edge state.",
+      "properties": {
+        "dot_source": {
+          "default": "",
+          "title": "Dot Source",
+          "type": "string"
+        },
+        "edge_count": {
+          "default": 0,
+          "title": "Edge Count",
+          "type": "integer"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "goal": {
+          "default": "",
+          "title": "Goal",
+          "type": "string"
+        },
+        "graph_name": {
+          "default": "",
+          "title": "Graph Name",
+          "type": "string"
+        },
+        "kind": {
+          "const": "pipeline_started",
+          "default": "pipeline_started",
+          "title": "Kind",
+          "type": "string"
+        },
+        "node_count": {
+          "default": 0,
+          "title": "Node Count",
+          "type": "integer"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "PipelineStarted",
+      "type": "object"
+    },
+    "PromptComplete": {
+      "additionalProperties": false,
+      "description": "The prompt's turn finished (``prompt:complete``).\n\nThe real runtime synthesizes this close-out event itself (after its\nend-of-turn git snapshot) and enriches it with the turn's concrete\nyield \u2014 the reducer turns these fields into the DESIGN-SPEC \u00a73\nshipped outcome (``3 files \u00b7 +142/\u221238 \u00b7 tests \u2714``). Raw hook payloads\nnormalized here carry only ``response``; the yield fields default off.",
+      "properties": {
+        "diffstat": {
+          "default": "",
+          "title": "Diffstat",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "files_changed": {
+          "default": 0,
+          "title": "Files Changed",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "prompt_complete",
+          "default": "prompt_complete",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "response": {
+          "default": "",
+          "title": "Response",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "tests_ok": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tests Ok"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "yield_measured": {
+          "default": true,
+          "title": "Yield Measured",
+          "type": "boolean"
+        }
+      },
+      "title": "PromptComplete",
+      "type": "object"
+    },
+    "PromptSubmit": {
+      "additionalProperties": false,
+      "description": "A user prompt entered the engine (``prompt:submit``) \u2014 the turn\nboundary where the app stamps its monotonic turn_id.\n\n``mode`` records the app posture (``chat``/``plan``/``brainstorm``/\n``build``/``auto``) active when the prompt was submitted, so the\ndurable ui-events.jsonl log preserves which posture a historical turn\nran under. On resume replay the reducer stamps this onto the user\nline's ``[mode]`` badge instead of the current live posture. Empty on\nlegacy logs (pre-stamp) \u2014 the reducer then falls back to live mode.",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "prompt_submit",
+          "default": "prompt_submit",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mode": {
+          "default": "",
+          "title": "Mode",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "prompt": {
+          "default": "",
+          "title": "Prompt",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        },
+        "workspace_checkpoint_id": {
+          "default": "",
+          "title": "Workspace Checkpoint Id",
+          "type": "string"
+        }
+      },
+      "title": "PromptSubmit",
+      "type": "object"
+    },
+    "ProviderNotice": {
+      "additionalProperties": false,
+      "description": "Provider error/retry/throttle notice (footer transient).\n\n``message`` is the verbatim provider text scrubbed at this boundary\n(never truncated \u2014 clipping is a display concern). ``category`` /\n``provider`` classify the failure from the payload's error type,\nstatus code and message; both are additive and default off for\nlegacy persisted records.",
+      "properties": {
+        "category": {
+          "default": "unknown",
+          "enum": [
+            "auth",
+            "quota",
+            "network",
+            "timeout",
+            "model",
+            "unknown"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "provider_notice",
+          "default": "provider_notice",
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "notice": {
+          "default": "error",
+          "enum": [
+            "error",
+            "retry",
+            "throttle"
+          ],
+          "title": "Notice",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "provider": {
+          "default": "",
+          "title": "Provider",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ProviderNotice",
+      "type": "object"
+    },
+    "ProviderResponseUsage": {
+      "additionalProperties": false,
+      "description": "Token usage from one provider response (``provider:response``).\n\nDrives live token counting, cache %, and per-turn cost (kernel\nSessionStatus counters are NOT populated \u2014 the app computes cost from\nthese numbers itself).",
+      "properties": {
+        "cache_read": {
+          "default": 0,
+          "title": "Cache Read",
+          "type": "integer"
+        },
+        "cache_write": {
+          "default": 0,
+          "title": "Cache Write",
+          "type": "integer"
+        },
+        "cost_usd": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Usd"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "input_tokens": {
+          "default": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "provider_response_usage",
+          "default": "provider_response_usage",
+          "title": "Kind",
+          "type": "string"
+        },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "output_tokens": {
+          "default": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ProviderResponseUsage",
+      "type": "object"
+    },
+    "RewindMarker": {
+      "additionalProperties": false,
+      "description": "A confirmed rewind boundary, persisted to the append-only log.\n\nThe ui-events log never truncates, so a resume would otherwise replay\nthe turns a rewind discarded (ghost turns). This marker is written to\nthe log at fork time (never a raw hook \u2014 the app synthesizes it) and\nhonored at read time by :func:`drop_rewound_events`: everything after\nthe ``kept_turns``-th surviving turn, up to this marker, is dropped\nbefore the events reach the reducer.\n\n- ``checkpoint_id``: the rewind target (``t2`` \u2026), for diagnostics.\n- ``kept_turns``: how many ``prompt_submit``-delimited turns survive\n  from the start of the reconstructed timeline (the target's 1-indexed\n  ledger position at fork time \u2014 which equals its position in the\n  ghost-filtered replay, one checkpoint per completed turn).",
+      "properties": {
+        "checkpoint_id": {
+          "default": "",
+          "title": "Checkpoint Id",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kept_turns": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Kept Turns",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "rewind_marker",
+          "default": "rewind_marker",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "RewindMarker",
+      "type": "object"
+    },
+    "RunError": {
+      "additionalProperties": false,
+      "description": "Terminal failure record; the process also exits non-zero.",
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "number"
+        },
+        "error": {
+          "title": "Error",
+          "type": "string"
+        },
+        "error_type": {
+          "title": "Error Type",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "type": {
+          "const": "error",
+          "default": "error",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp",
+        "session_id",
+        "error",
+        "error_type",
+        "duration_ms"
+      ],
+      "title": "RunError",
+      "type": "object"
+    },
+    "RuntimeEvent": {
+      "additionalProperties": false,
+      "description": "One normalized event, emitted without waiting for turn completion.",
+      "properties": {
+        "event": {
+          "discriminator": {
+            "mapping": {
+              "agent_completed": "#/$defs/AgentCompleted",
+              "agent_resumed": "#/$defs/AgentResumed",
+              "agent_spawned": "#/$defs/AgentSpawned",
+              "approval_denied": "#/$defs/ApprovalDenied",
+              "approval_granted": "#/$defs/ApprovalGranted",
+              "approval_required": "#/$defs/ApprovalRequired",
+              "artifact_write": "#/$defs/ArtifactWrite",
+              "cancel_completed": "#/$defs/CancelCompleted",
+              "cancel_requested": "#/$defs/CancelRequested",
+              "content_block_end": "#/$defs/ContentBlockEnd",
+              "content_block_start": "#/$defs/ContentBlockStart",
+              "context_compacted": "#/$defs/ContextCompacted",
+              "context_injected": "#/$defs/ContextInjected",
+              "decision_answered": "#/$defs/DecisionAnswered",
+              "decision_applied": "#/$defs/DecisionApplied",
+              "execution_end": "#/$defs/ExecutionEnd",
+              "execution_start": "#/$defs/ExecutionStart",
+              "goal_progress": "#/$defs/GoalProgress",
+              "notification": "#/$defs/Notification",
+              "orchestrator_complete": "#/$defs/OrchestratorComplete",
+              "pipeline_checkpoint": "#/$defs/PipelineCheckpoint",
+              "pipeline_complete": "#/$defs/PipelineComplete",
+              "pipeline_progress": "#/$defs/PipelineProgress",
+              "pipeline_started": "#/$defs/PipelineStarted",
+              "prompt_complete": "#/$defs/PromptComplete",
+              "prompt_submit": "#/$defs/PromptSubmit",
+              "provider_notice": "#/$defs/ProviderNotice",
+              "provider_response_usage": "#/$defs/ProviderResponseUsage",
+              "rewind_marker": "#/$defs/RewindMarker",
+              "session_end": "#/$defs/SessionEnd",
+              "session_fork": "#/$defs/SessionFork",
+              "session_resume": "#/$defs/SessionResume",
+              "session_start": "#/$defs/SessionStart",
+              "stream_aborted": "#/$defs/StreamAborted",
+              "stream_block_delta": "#/$defs/StreamBlockDelta",
+              "stream_block_end": "#/$defs/StreamBlockEnd",
+              "stream_block_start": "#/$defs/StreamBlockStart",
+              "tool_error": "#/$defs/ToolError",
+              "tool_post": "#/$defs/ToolPost",
+              "tool_pre": "#/$defs/ToolPre"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/StreamBlockStart"
+            },
+            {
+              "$ref": "#/$defs/StreamBlockDelta"
+            },
+            {
+              "$ref": "#/$defs/StreamBlockEnd"
+            },
+            {
+              "$ref": "#/$defs/StreamAborted"
+            },
+            {
+              "$ref": "#/$defs/ToolPre"
+            },
+            {
+              "$ref": "#/$defs/ToolPost"
+            },
+            {
+              "$ref": "#/$defs/ToolError"
+            },
+            {
+              "$ref": "#/$defs/ContentBlockStart"
+            },
+            {
+              "$ref": "#/$defs/ContentBlockEnd"
+            },
+            {
+              "$ref": "#/$defs/OrchestratorComplete"
+            },
+            {
+              "$ref": "#/$defs/GoalProgress"
+            },
+            {
+              "$ref": "#/$defs/PipelineStarted"
+            },
+            {
+              "$ref": "#/$defs/PipelineProgress"
+            },
+            {
+              "$ref": "#/$defs/PipelineCheckpoint"
+            },
+            {
+              "$ref": "#/$defs/PipelineComplete"
+            },
+            {
+              "$ref": "#/$defs/PromptSubmit"
+            },
+            {
+              "$ref": "#/$defs/PromptComplete"
+            },
+            {
+              "$ref": "#/$defs/ExecutionStart"
+            },
+            {
+              "$ref": "#/$defs/ExecutionEnd"
+            },
+            {
+              "$ref": "#/$defs/ProviderResponseUsage"
+            },
+            {
+              "$ref": "#/$defs/ProviderNotice"
+            },
+            {
+              "$ref": "#/$defs/SessionStart"
+            },
+            {
+              "$ref": "#/$defs/SessionEnd"
+            },
+            {
+              "$ref": "#/$defs/SessionFork"
+            },
+            {
+              "$ref": "#/$defs/SessionResume"
+            },
+            {
+              "$ref": "#/$defs/RewindMarker"
+            },
+            {
+              "$ref": "#/$defs/ApprovalRequired"
+            },
+            {
+              "$ref": "#/$defs/ApprovalGranted"
+            },
+            {
+              "$ref": "#/$defs/ApprovalDenied"
+            },
+            {
+              "$ref": "#/$defs/DecisionAnswered"
+            },
+            {
+              "$ref": "#/$defs/DecisionApplied"
+            },
+            {
+              "$ref": "#/$defs/CancelRequested"
+            },
+            {
+              "$ref": "#/$defs/CancelCompleted"
+            },
+            {
+              "$ref": "#/$defs/AgentSpawned"
+            },
+            {
+              "$ref": "#/$defs/AgentCompleted"
+            },
+            {
+              "$ref": "#/$defs/AgentResumed"
+            },
+            {
+              "$ref": "#/$defs/Notification"
+            },
+            {
+              "$ref": "#/$defs/ContextInjected"
+            },
+            {
+              "$ref": "#/$defs/ContextCompacted"
+            },
+            {
+              "$ref": "#/$defs/ArtifactWrite"
+            }
+          ],
+          "title": "Event"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "type": {
+          "const": "runtime.event",
+          "default": "runtime.event",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp",
+        "event"
+      ],
+      "title": "RuntimeEvent",
+      "type": "object"
+    },
+    "SessionEnd": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "session_end",
+          "default": "session_end",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "SessionEnd",
+      "type": "object"
+    },
+    "SessionFork": {
+      "additionalProperties": false,
+      "description": "A session forked (rewind); ``source_session_id`` is the parent.",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "session_fork",
+          "default": "session_fork",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "source_session_id": {
+          "default": "",
+          "title": "Source Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "SessionFork",
+      "type": "object"
+    },
+    "SessionResume": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "session_resume",
+          "default": "session_resume",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "SessionResume",
+      "type": "object"
+    },
+    "SessionStart": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "session_start",
+          "default": "session_start",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "SessionStart",
+      "type": "object"
+    },
+    "SessionStarted": {
+      "additionalProperties": false,
+      "description": "The runtime is mounted and its session identity is known.",
+      "properties": {
+        "bundle": {
+          "title": "Bundle",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "type": {
+          "const": "session.started",
+          "default": "session.started",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp",
+        "session_id",
+        "bundle",
+        "model"
+      ],
+      "title": "SessionStarted",
+      "type": "object"
+    },
+    "StreamAborted": {
+      "additionalProperties": false,
+      "description": "The stream died mid-flight (``llm:stream_aborted``).",
+      "properties": {
+        "error_message": {
+          "default": "",
+          "title": "Error Message",
+          "type": "string"
+        },
+        "error_type": {
+          "default": "",
+          "title": "Error Type",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "stream_aborted",
+          "default": "stream_aborted",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "request_id": {
+          "default": "",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "StreamAborted",
+      "type": "object"
+    },
+    "StreamBlockDelta": {
+      "additionalProperties": false,
+      "description": "One incremental text/thinking chunk (``llm:stream_block_delta``).\n\n``text`` is canonical regardless of which raw key (``delta`` /\n``text`` / ``content``) the provider used.",
+      "properties": {
+        "block_index": {
+          "default": 0,
+          "title": "Block Index",
+          "type": "integer"
+        },
+        "block_type": {
+          "default": "text",
+          "title": "Block Type",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "stream_block_delta",
+          "default": "stream_block_delta",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "request_id": {
+          "default": "",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "sequence": {
+          "default": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "StreamBlockDelta",
+      "type": "object"
+    },
+    "StreamBlockEnd": {
+      "additionalProperties": false,
+      "description": "A streaming block closed \u2014 consolidate the live tail now.",
+      "properties": {
+        "block_index": {
+          "default": 0,
+          "title": "Block Index",
+          "type": "integer"
+        },
+        "block_type": {
+          "default": "text",
+          "title": "Block Type",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "stream_block_end",
+          "default": "stream_block_end",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "request_id": {
+          "default": "",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "StreamBlockEnd",
+      "type": "object"
+    },
+    "StreamBlockStart": {
+      "additionalProperties": false,
+      "description": "A streaming content block opened (``llm:stream_block_start``).",
+      "properties": {
+        "block_index": {
+          "default": 0,
+          "title": "Block Index",
+          "type": "integer"
+        },
+        "block_type": {
+          "default": "text",
+          "title": "Block Type",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "stream_block_start",
+          "default": "stream_block_start",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "request_id": {
+          "default": "",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "StreamBlockStart",
+      "type": "object"
+    },
+    "ToolArtifact": {
+      "additionalProperties": false,
+      "description": "A concrete output produced by a tool and safe for a host to present.",
+      "properties": {
+        "kind": {
+          "default": "file",
+          "enum": [
+            "file",
+            "image",
+            "diagram",
+            "data"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "media_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Media Type"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ToolArtifact",
+      "type": "object"
+    },
+    "ToolError": {
+      "additionalProperties": false,
+      "description": "A tool call failed (``tool:error``).",
+      "properties": {
+        "error_message": {
+          "default": "",
+          "title": "Error Message",
+          "type": "string"
+        },
+        "error_type": {
+          "default": "",
+          "title": "Error Type",
+          "type": "string"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "tool_error",
+          "default": "tool_error",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_name": {
+          "default": "",
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ToolError",
+      "type": "object"
+    },
+    "ToolPost": {
+      "additionalProperties": false,
+      "description": "A tool call finished (``tool:post``) \u2014 finalize + expandable body.\n\n``result`` is the normalized payload whether the raw event used\n``result`` or ``tool_response``.",
+      "properties": {
+        "artifacts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ToolArtifact"
+          },
+          "title": "Artifacts",
+          "type": "array"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "tool_post",
+          "default": "tool_post",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "result": {
+          "additionalProperties": true,
+          "title": "Result",
+          "type": "object"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_input": {
+          "additionalProperties": true,
+          "title": "Tool Input",
+          "type": "object"
+        },
+        "tool_name": {
+          "default": "",
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ToolPost",
+      "type": "object"
+    },
+    "ToolPre": {
+      "additionalProperties": false,
+      "description": "A tool call is about to run (``tool:pre``) \u2014 open the tool line.",
+      "properties": {
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "tool_pre",
+          "default": "tool_pre",
+          "title": "Kind",
+          "type": "string"
+        },
+        "parallel_group_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parallel Group Id"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "session_id": {
+          "default": "",
+          "title": "Session Id",
+          "type": "string"
+        },
+        "tool_call_id": {
+          "default": "",
+          "title": "Tool Call Id",
+          "type": "string"
+        },
+        "tool_input": {
+          "additionalProperties": true,
+          "title": "Tool Input",
+          "type": "object"
+        },
+        "tool_name": {
+          "default": "",
+          "title": "Tool Name",
+          "type": "string"
+        },
+        "ts": {
+          "title": "Ts",
+          "type": "number"
+        }
+      },
+      "title": "ToolPre",
+      "type": "object"
+    },
+    "TurnCompleted": {
+      "additionalProperties": false,
+      "description": "Terminal success record for the one-shot turn.",
+      "properties": {
+        "duration_ms": {
+          "minimum": 0,
+          "title": "Duration Ms",
+          "type": "number"
+        },
+        "response": {
+          "title": "Response",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "sequence": {
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "timestamp": {
+          "title": "Timestamp",
+          "type": "string"
+        },
+        "type": {
+          "const": "turn.completed",
+          "default": "turn.completed",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sequence",
+        "timestamp",
+        "session_id",
+        "response",
+        "duration_ms"
+      ],
+      "title": "TurnCompleted",
+      "type": "object"
+    }
+  },
+  "$id": "urn:amplifier:runtime-data:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "discriminator": {
+    "mapping": {
+      "error": "#/$defs/RunError",
+      "runtime.event": "#/$defs/RuntimeEvent",
+      "session.started": "#/$defs/SessionStarted",
+      "turn.completed": "#/$defs/TurnCompleted"
+    },
+    "propertyName": "type"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/SessionStarted"
+    },
+    {
+      "$ref": "#/$defs/RuntimeEvent"
+    },
+    {
+      "$ref": "#/$defs/TurnCompleted"
+    },
+    {
+      "$ref": "#/$defs/RunError"
+    }
+  ]
+}

@@ -1,0 +1,863 @@
+{
+  "schema_version": "client-boundary-source-review/v1",
+  "date": "2026-10-28",
+  "scope": "Nine explicitly listed session surfaces/adapters/experiments; not every visual learning artifact or a complete consumer inventory.",
+  "runtime_revision": "6951bc42dc617d18cc6db065f534c350b0d6cbea",
+  "tui_revision": "e6c7b277f59cd90f1961a2a24be4e9f1ba64b685",
+  "kernel_paths_compared": 87,
+  "identical_blob_pairs": 52,
+  "divergent_blob_pairs": 35,
+  "correction": "Blob duplication is physical source retention, not evidence of two active kernels. The TUI kernel/model package paths already delegate to the separately installed runtime, with no fallback.",
+  "path_matrix": [
+    {
+      "path": "__init__.py",
+      "runtime_blob": "56ff1bb6fd16c2bcb9b4cc7ae42b46abfb982b0e",
+      "tui_blob": "da77d897b265e59777107a7937aed4e10af4ccff",
+      "byte_identical": false,
+      "tui_execution_role": "active compatibility shim",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/__init__.py",
+      "runtime_blob": "6b013ad9ecd5e8dabeee4c8888083c12e5f2fa19",
+      "tui_blob": "6b013ad9ecd5e8dabeee4c8888083c12e5f2fa19",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/discovery.py",
+      "runtime_blob": "a906a1f31730d7da4f0aa8e1a592abd0d55d584b",
+      "tui_blob": "a906a1f31730d7da4f0aa8e1a592abd0d55d584b",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/grants.py",
+      "runtime_blob": "160063c4ac83dd7fa6159d0a456adcd07d2e7014",
+      "tui_blob": "f694b51b470a12fc9c6c229b707d3048967465c9",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/interpretation.py",
+      "runtime_blob": "78688ce17a965cc3111f87ceefefa3ba3a132ee5",
+      "tui_blob": "0e70eb89b5581fbe5b3690f4748e4e7d06a5c3a3",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/principal.py",
+      "runtime_blob": "c313312cf22acf50a8ccd1dc0a0d95bdec3d58e7",
+      "tui_blob": "ee3deb101d4aedba24b6a4baafa796241c12d960",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/reply.py",
+      "runtime_blob": "d4afdb7eb568fc4a984025646b6310f251c0c00f",
+      "tui_blob": "d4afdb7eb568fc4a984025646b6310f251c0c00f",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/reply_listener.py",
+      "runtime_blob": "bfe663806bbde6ed5c8f28e8789768ed575d84dd",
+      "tui_blob": "bfe663806bbde6ed5c8f28e8789768ed575d84dd",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/sources.py",
+      "runtime_blob": "bd8b30eaa3cba2992d62ae1b9972e0e3de817eb4",
+      "tui_blob": "bd8b30eaa3cba2992d62ae1b9972e0e3de817eb4",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "ambient/voice.py",
+      "runtime_blob": "de50d237bbe8401ad0552b458cd346dc32243677",
+      "tui_blob": "de50d237bbe8401ad0552b458cd346dc32243677",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "approval.py",
+      "runtime_blob": "4153192f1d900e37895ec1254f3bffe585a21534",
+      "tui_blob": "4153192f1d900e37895ec1254f3bffe585a21534",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "attention_push.py",
+      "runtime_blob": "59f5d5dd257ad4afefcb65738a349b4f06b18dab",
+      "tui_blob": "59f5d5dd257ad4afefcb65738a349b4f06b18dab",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "attention_store.py",
+      "runtime_blob": "a2d908d9254cf431919161f73b3a896c1cb793af",
+      "tui_blob": "6a26f91a988e8696d8fbd48bb88b8f7aa73483dc",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "bundle_admin.py",
+      "runtime_blob": "ed7172f2fc889e0d0f5dab86e06cc97320889c3d",
+      "tui_blob": "ed7172f2fc889e0d0f5dab86e06cc97320889c3d",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "bundle_compose.py",
+      "runtime_blob": "99c75dabcb9ab634a913dace17c9631cf52a11aa",
+      "tui_blob": "99c75dabcb9ab634a913dace17c9631cf52a11aa",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "bundle_content.py",
+      "runtime_blob": "8ffdec642a6cd7578414764e67a6dfdbad7dd5db",
+      "tui_blob": "8ffdec642a6cd7578414764e67a6dfdbad7dd5db",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "bundle_summon.py",
+      "runtime_blob": "149f8ee899345d7e661379cfffb981008acd88e3",
+      "tui_blob": "8d467fa27f783a59a74a1514f96c5a5771b922b8",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "checkpoints.py",
+      "runtime_blob": "6c47e2c92d7db01079446b21f5ba3e71f4eb5d8d",
+      "tui_blob": "519912e2244d2f7c08e22ca38552903b50c33ab4",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "clipboard.py",
+      "runtime_blob": "6560c5a6063410342c059680687f28b83388d916",
+      "tui_blob": "e7a4f50bd78d8cd2acf90e7132f7b28b9f0edd6a",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "codemode.py",
+      "runtime_blob": "d904e2a7c67c690ee4a46848010eafa28a484474",
+      "tui_blob": "b4b7c4fd08c7c4f4134765ee2b737677145cd546",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "compaction.py",
+      "runtime_blob": "4e71e7f888d80d6a529fc33d0bec8134858b201d",
+      "tui_blob": "4e71e7f888d80d6a529fc33d0bec8134858b201d",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "completion_integrity.py",
+      "runtime_blob": "aafcc5bdfcd891d4d463f3bda419fe9901f7c369",
+      "tui_blob": "aafcc5bdfcd891d4d463f3bda419fe9901f7c369",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "config.py",
+      "runtime_blob": "608fce8c679e51a5ca2230bab72bdd4d8efd109a",
+      "tui_blob": "a9889afbdabfc2b9c4c455c61b92bdc7211d144a",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "config_ops.py",
+      "runtime_blob": "5664d1784295b80c2f9b48c78fb854a09e7d05d7",
+      "tui_blob": "84ffb6d273f622283a78c083603a1a0f906f4ad9",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "context_meter.py",
+      "runtime_blob": "6f48f8aebf5b8d663741b0757d991773796266ed",
+      "tui_blob": "1473cf471111d167fab588d6cda8d7f96586f1fe",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "cost.py",
+      "runtime_blob": "2b099fb263084f0514c35a436a259978438aa1df",
+      "tui_blob": "175cacb48644124f2718075e35fb30be9a057d6b",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "demo.py",
+      "runtime_blob": "43221267a261924eb00b6713b56a7a630d22e515",
+      "tui_blob": "9bebc9a0d0021083a6ca15f381010d05c36e9947",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "directory_permissions.py",
+      "runtime_blob": "b3580a1ea211cd79308f2c70ba5a38b10adb4f42",
+      "tui_blob": "b3580a1ea211cd79308f2c70ba5a38b10adb4f42",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "display.py",
+      "runtime_blob": "8e750cfb0d87feba876172edc84cac0ddd1a1471",
+      "tui_blob": "8e750cfb0d87feba876172edc84cac0ddd1a1471",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "events.py",
+      "runtime_blob": "9c96ffe4fcdd59b0fd0eaa44274e85918eb2e510",
+      "tui_blob": "ad7cb09ac3635432713f6045a87101bf083d65b4",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "evidence.py",
+      "runtime_blob": "520cac62b1cec6ba589798c2119a679ab0624733",
+      "tui_blob": "a641395b272a7faae6d716c227b96df45170214d",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "external_editor.py",
+      "runtime_blob": "1747f5cb84126ecaff3f0600a27cfdc2107974dc",
+      "tui_blob": "1747f5cb84126ecaff3f0600a27cfdc2107974dc",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "file_lock.py",
+      "runtime_blob": "5d66d28eac204b2a1db6a31ba579a0a8ad2ec6a6",
+      "tui_blob": "5d66d28eac204b2a1db6a31ba579a0a8ad2ec6a6",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "file_mentions.py",
+      "runtime_blob": "fc68fddf0f084fb8cb270884a65c355d77f80118",
+      "tui_blob": "fc68fddf0f084fb8cb270884a65c355d77f80118",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "frecency.py",
+      "runtime_blob": "26dd2969ac5785f7d911d4e666c42dc1759a2688",
+      "tui_blob": "26dd2969ac5785f7d911d4e666c42dc1759a2688",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "fuzzy.py",
+      "runtime_blob": "522d08104350a5907bf54dc9b63036cc971be231",
+      "tui_blob": "522d08104350a5907bf54dc9b63036cc971be231",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "git_yield.py",
+      "runtime_blob": "4add55ca2313c610b835ac4538279ac964c9b4ef",
+      "tui_blob": "4add55ca2313c610b835ac4538279ac964c9b4ef",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "goal.py",
+      "runtime_blob": "0ecb2d94fce3b3b0435f15d63fae8dc4e3cc4eb3",
+      "tui_blob": "0ecb2d94fce3b3b0435f15d63fae8dc4e3cc4eb3",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "governance_hook.py",
+      "runtime_blob": "5b301a400405ff8eeb6fd83654cfcbe412ac691f",
+      "tui_blob": "19616415b03f5725fd764e3458d8af6f003dbcca",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "jsonl.py",
+      "runtime_blob": "d4f1a490fc02cbe3df1b86e008a538d5364f2f77",
+      "tui_blob": "3d648856ef026e6e4056b5cbca1cfa3a04d14b25",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "live_mcp.py",
+      "runtime_blob": "c467c846812f7378f2a7fcaef14f172b13ffabf8",
+      "tui_blob": "c467c846812f7378f2a7fcaef14f172b13ffabf8",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "logging_hygiene.py",
+      "runtime_blob": "4e22c87a5dc5d905802283e3f155844d61e499c4",
+      "tui_blob": "4e22c87a5dc5d905802283e3f155844d61e499c4",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "mcp_config.py",
+      "runtime_blob": "d0bd05f0f87a68bab4efd5dc407eb35e84d19ff9",
+      "tui_blob": "d0bd05f0f87a68bab4efd5dc407eb35e84d19ff9",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "mcp_prompts.py",
+      "runtime_blob": "2b79f1650e487234912511724715c97f6ce856bb",
+      "tui_blob": "2b79f1650e487234912511724715c97f6ce856bb",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "mention_expansion.py",
+      "runtime_blob": "95f020eaac5b24d1f8778e493e72912f46cf324c",
+      "tui_blob": "95f020eaac5b24d1f8778e493e72912f46cf324c",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "model_routing.py",
+      "runtime_blob": "ad7018a0d057bea192fced61320617a4bc37a34f",
+      "tui_blob": "ad7018a0d057bea192fced61320617a4bc37a34f",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "native_picker.py",
+      "runtime_blob": "6c8a1c9c7b55d453ae65a348ce8945c8fb7a0bff",
+      "tui_blob": "8904ec461479cb33d1a4e2306cdb6b1eb31eaba5",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "notify_admin.py",
+      "runtime_blob": "0d9446bd84a66032726261cd9f11ffe674899aad",
+      "tui_blob": "0d9446bd84a66032726261cd9f11ffe674899aad",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "persistence.py",
+      "runtime_blob": "bf0a704ecfa15de6b3c728b79a62fe15a725e748",
+      "tui_blob": "08d388c205322de8940c238acf53c4469a9352a7",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "preflight.py",
+      "runtime_blob": "7009c4e5cfec1201de5ecdf6d2fa1055029b90bf",
+      "tui_blob": "7009c4e5cfec1201de5ecdf6d2fa1055029b90bf",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "preflight_verify.py",
+      "runtime_blob": "2c441ffaa364c6f1f7a7af939d5ce16f81a776d0",
+      "tui_blob": "2c441ffaa364c6f1f7a7af939d5ce16f81a776d0",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "prompt_history.py",
+      "runtime_blob": "aff207b963fc0bbc4aa9d5e47a2314b8b917dbaa",
+      "tui_blob": "aff207b963fc0bbc4aa9d5e47a2314b8b917dbaa",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "question.py",
+      "runtime_blob": "2b400326acbf2277c69f282ff0e79f8902020817",
+      "tui_blob": "9f139eec2894e4acd1a211a31f6778f52f6f6035",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "queue_bridge.py",
+      "runtime_blob": "1dd3b96d0f25d19a545e4319abbc96fe67c80e08",
+      "tui_blob": "79f8dd1406aa56c71dd50e76aff074fe9e130ea6",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "recipes.py",
+      "runtime_blob": "46ca2141d2d9c3c56f2ea4d7b96b431d961b10d8",
+      "tui_blob": "46ca2141d2d9c3c56f2ea4d7b96b431d961b10d8",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "reminder_trust.py",
+      "runtime_blob": "3f0377fb61bf9be652ef239c0732318dbe9ac35e",
+      "tui_blob": "3f0377fb61bf9be652ef239c0732318dbe9ac35e",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "reset.py",
+      "runtime_blob": "579bdbdafc4114a88c825164340d3b2ede37c96f",
+      "tui_blob": "579bdbdafc4114a88c825164340d3b2ede37c96f",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "rewind.py",
+      "runtime_blob": "c5d5352518108f1627de8d7307c9b75b9ae85321",
+      "tui_blob": "c5d5352518108f1627de8d7307c9b75b9ae85321",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "routing_admin.py",
+      "runtime_blob": "798f044eca01f35f4bc16b42e61a49cf915906bb",
+      "tui_blob": "e86bedcbec3a233a0e42264999f3a012ca5f00e0",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "runtime.py",
+      "runtime_blob": "40e54bb393dc1e3a31c524006aab19908fd7bf81",
+      "tui_blob": "c93886aaa2d4b93e7e989de051cc33c6e71d0d23",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "safety.py",
+      "runtime_blob": "9d4e475feeb6da032dae51dcbe056261cf64a03d",
+      "tui_blob": "9d4e475feeb6da032dae51dcbe056261cf64a03d",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "serve.py",
+      "runtime_blob": "7253eb0bb6376eb75bad44cbad914a81fe156d71",
+      "tui_blob": "2739bb9a1c423b30d870957df1f03571c8c7c728",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_attach.py",
+      "runtime_blob": "750c99b47caf957c5e01d64c8c799047cf7aa36a",
+      "tui_blob": "ec5b79ddcb6387a48c3c93db19c3be864404bfed",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_authz.py",
+      "runtime_blob": "f1da824bdea5b1e82a055f9c6d4f0e8d81cdbb5b",
+      "tui_blob": "f1da824bdea5b1e82a055f9c6d4f0e8d81cdbb5b",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_control.py",
+      "runtime_blob": "6e74f7f4f93add875d81410e68015dd73ad448be",
+      "tui_blob": "b46102198e930ed9703b107ca9654491d9e7cad4",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_factory.py",
+      "runtime_blob": "0bd9f8f88ec55ddfdeca77a43526aa96c0e00145",
+      "tui_blob": "0bd9f8f88ec55ddfdeca77a43526aa96c0e00145",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_integrity.py",
+      "runtime_blob": "2b199e9698a2e014a5845219e43c191e775f1ac6",
+      "tui_blob": "2b199e9698a2e014a5845219e43c191e775f1ac6",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_manager.py",
+      "runtime_blob": "3d1a0798e2f48488e83367483053587a997bdc2b",
+      "tui_blob": "9fc8fc38476090c498966c68d6bef6c8f9780ae5",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_ops.py",
+      "runtime_blob": "32869d6755a78f6267899f90f234447ab1f61c10",
+      "tui_blob": "fa673120c0448c23ed1ff7fc627c264c69086b99",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "session_transfer.py",
+      "runtime_blob": "f01ec7b6fc2503de3bf283f198a248154b9f6311",
+      "tui_blob": "c6d34052e7ed862658b5cf0ad84fdb540b897756",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "settings_service.py",
+      "runtime_blob": "668398f85a5fa52befa4855f5e044453fb3eb1eb",
+      "tui_blob": "668398f85a5fa52befa4855f5e044453fb3eb1eb",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "setup.py",
+      "runtime_blob": "056cab1e25e2bf42a4ccb13f2f9b4e052c40cab0",
+      "tui_blob": "073a09cba4d3d7b66c06cd9c2d2a8b46006221dc",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "skill_activation.py",
+      "runtime_blob": "e6853d3c612d5ad022921024ef8090a45b5cc85e",
+      "tui_blob": "e6853d3c612d5ad022921024ef8090a45b5cc85e",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "skill_sources.py",
+      "runtime_blob": "37db520dbcd79f280ed1317698470a6a0ab6873f",
+      "tui_blob": "37db520dbcd79f280ed1317698470a6a0ab6873f",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "source_admin.py",
+      "runtime_blob": "7ed012d1bb9746ace849bfb2a5becd0e02c47418",
+      "tui_blob": "7ed012d1bb9746ace849bfb2a5becd0e02c47418",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "source_lock.py",
+      "runtime_blob": "b0cb5eb2b3573e33114fc692dfaa0553efb04b49",
+      "tui_blob": "b0cb5eb2b3573e33114fc692dfaa0553efb04b49",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "spawner.py",
+      "runtime_blob": "0ab109e1bce139f34f8a24253a6d531db5eccbe1",
+      "tui_blob": "0ab109e1bce139f34f8a24253a6d531db5eccbe1",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "stats.py",
+      "runtime_blob": "582ed85122d3caff94cd7ffc985ee9a808efb708",
+      "tui_blob": "dc6140159e19a96e8458c850656cadc48d7bf1af",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "steering.py",
+      "runtime_blob": "0725db8ea9509f0f5a17276937bf7ee7606df993",
+      "tui_blob": "0725db8ea9509f0f5a17276937bf7ee7606df993",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "surface_hint.py",
+      "runtime_blob": "8f3e6f4accaa63937d7077971634b7a466202897",
+      "tui_blob": "8e4fc03712508af0f196fca3301af6869ceec8df",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "tool_cli.py",
+      "runtime_blob": "72bab24c439338113c562fd4c3373b3f066013e2",
+      "tui_blob": "32fb49db27bd0ee47964934b0f7b2b0eeb4f2ab6",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "trackers/__init__.py",
+      "runtime_blob": "9ecbdb1d49342cdbee780d507b5cd75b7c26238c",
+      "tui_blob": "9ecbdb1d49342cdbee780d507b5cd75b7c26238c",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "trackers/runtime_status.py",
+      "runtime_blob": "b16953cbf41bb4e101712a9250daa744ba369c26",
+      "tui_blob": "b16953cbf41bb4e101712a9250daa744ba369c26",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "trackers/stream_status.py",
+      "runtime_blob": "b8b183d0c482f2d870ca84627b27f2e6a14636ae",
+      "tui_blob": "b8b183d0c482f2d870ca84627b27f2e6a14636ae",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "trackers/task_status.py",
+      "runtime_blob": "2cc4e24c6849bfb707789e736251be8a2f686d95",
+      "tui_blob": "2cc4e24c6849bfb707789e736251be8a2f686d95",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "turn_yield.py",
+      "runtime_blob": "a7fb78aa315d4640b3856927638ac576f26a208a",
+      "tui_blob": "a7fb78aa315d4640b3856927638ac576f26a208a",
+      "byte_identical": true,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    },
+    {
+      "path": "updater.py",
+      "runtime_blob": "fed8d2441dc0ef04bc47bfc29e170de9a1187da4",
+      "tui_blob": "b306cea62c126de8f972f6bc6abcc9e6c3aa3c67",
+      "byte_identical": false,
+      "tui_execution_role": "inert local body under the configured runtime-only package path",
+      "owner": "amplifier-runtime; the TUI retains its compatibility shim"
+    }
+  ],
+  "surface_reviews": [
+    {
+      "repository": "amplifier-runtime",
+      "source_revision": "6951bc42dc617d18cc6db065f534c350b0d6cbea",
+      "exact_paths": [
+        "src/amplifier_runtime/kernel/events.py",
+        "src/amplifier_runtime/kernel/serve.py",
+        "src/amplifier_runtime/kernel/jsonl.py"
+      ],
+      "finding": "Canonical session/event/control owner; no UI rendering dependencies.",
+      "sources": [
+        "https://github.com/michaeljabbour/amplifier-runtime/blob/6951bc42dc617d18cc6db065f534c350b0d6cbea/src/amplifier_runtime/kernel/events.py",
+        "https://github.com/michaeljabbour/amplifier-runtime/blob/6951bc42dc617d18cc6db065f534c350b0d6cbea/src/amplifier_runtime/kernel/serve.py",
+        "https://github.com/michaeljabbour/amplifier-runtime/blob/6951bc42dc617d18cc6db065f534c350b0d6cbea/src/amplifier_runtime/kernel/jsonl.py"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "amplifier-app-tui",
+      "source_revision": "e6c7b277f59cd90f1961a2a24be4e9f1ba64b685",
+      "exact_paths": [
+        "src/amplifier_app_tui/kernel/__init__.py",
+        "src/amplifier_app_tui/model/__init__.py",
+        "src/amplifier_app_tui/ui/runtime_adapter.py"
+      ],
+      "finding": "Textual presentation plus compatibility imports; local kernel/model body copies are excluded by their __path__ shims.",
+      "sources": [
+        "https://github.com/michaeljabbour/amplifier-app-tui/blob/e6c7b277f59cd90f1961a2a24be4e9f1ba64b685/src/amplifier_app_tui/kernel/__init__.py",
+        "https://github.com/michaeljabbour/amplifier-app-tui/blob/e6c7b277f59cd90f1961a2a24be4e9f1ba64b685/src/amplifier_app_tui/model/__init__.py",
+        "https://github.com/michaeljabbour/amplifier-app-tui/blob/e6c7b277f59cd90f1961a2a24be4e9f1ba64b685/src/amplifier_app_tui/ui/runtime_adapter.py"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "amplifier-app-tui-rust",
+      "source_revision": "60ee026c3813ec10dd853afeee3a0f89ccddcbd1",
+      "exact_paths": [
+        "src/ui/runtime_adapter.rs",
+        "src/ui/composer.rs",
+        "src/ui/approval_bar.rs",
+        "PARITY.md",
+        "PERFORMANCE.md"
+      ],
+      "finding": "Retain the Rust interaction/performance experiment and wire-client differences; no automatic parity claim.",
+      "sources": [
+        "https://github.com/michaeljabbour/amplifier-app-tui-rust/blob/60ee026c3813ec10dd853afeee3a0f89ccddcbd1/src/ui/runtime_adapter.rs",
+        "https://github.com/michaeljabbour/amplifier-app-tui-rust/blob/60ee026c3813ec10dd853afeee3a0f89ccddcbd1/src/ui/composer.rs",
+        "https://github.com/michaeljabbour/amplifier-app-tui-rust/blob/60ee026c3813ec10dd853afeee3a0f89ccddcbd1/src/ui/approval_bar.rs",
+        "https://github.com/michaeljabbour/amplifier-app-tui-rust/blob/60ee026c3813ec10dd853afeee3a0f89ccddcbd1/PARITY.md",
+        "https://github.com/michaeljabbour/amplifier-app-tui-rust/blob/60ee026c3813ec10dd853afeee3a0f89ccddcbd1/PERFORMANCE.md"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "amplifier-app-studio",
+      "source_revision": "bef1be53f29d1b15f1c3ff9267b92f19ef34c951",
+      "exact_paths": [
+        "src/protocol.ts",
+        "src/transport.ts",
+        "src/reducer.test.ts",
+        "src/components/Inspector.tsx",
+        "src/components/TerminalWorkSurface.tsx"
+      ],
+      "finding": "Rich desktop/mobile inspection, attachments and replay/reconnect behavior; preserve surface-specific tests.",
+      "sources": [
+        "https://github.com/michaeljabbour/amplifier-app-studio/blob/bef1be53f29d1b15f1c3ff9267b92f19ef34c951/src/protocol.ts",
+        "https://github.com/michaeljabbour/amplifier-app-studio/blob/bef1be53f29d1b15f1c3ff9267b92f19ef34c951/src/transport.ts",
+        "https://github.com/michaeljabbour/amplifier-app-studio/blob/bef1be53f29d1b15f1c3ff9267b92f19ef34c951/src/reducer.test.ts",
+        "https://github.com/michaeljabbour/amplifier-app-studio/blob/bef1be53f29d1b15f1c3ff9267b92f19ef34c951/src/components/Inspector.tsx",
+        "https://github.com/michaeljabbour/amplifier-app-studio/blob/bef1be53f29d1b15f1c3ff9267b92f19ef34c951/src/components/TerminalWorkSurface.tsx"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "amplifier-app-cli",
+      "source_revision": "30c0a658f5b5bc05b63010a65b1ba7293452249b",
+      "exact_paths": [
+        "amplifier_app_cli/approval_provider.py",
+        "amplifier_app_cli/session_runner.py"
+      ],
+      "finding": "Existing CLI/Foundation integration; do not assume every path already consumes the neutral runtime.",
+      "sources": [
+        "https://github.com/michaeljabbour/amplifier-app-cli/blob/30c0a658f5b5bc05b63010a65b1ba7293452249b/amplifier_app_cli/approval_provider.py",
+        "https://github.com/michaeljabbour/amplifier-app-cli/blob/30c0a658f5b5bc05b63010a65b1ba7293452249b/amplifier_app_cli/session_runner.py"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "opencode-amplifier",
+      "source_revision": "27b6bbf052bf09f62086c1cb3b30103d8714bc13",
+      "exact_paths": [
+        "src/runtime/client.ts",
+        "src/runtime/contracts.ts",
+        "src/plugin/hooks.ts"
+      ],
+      "finding": "Host integration adapter; share runtime protocol while retaining host lifecycle/presentation.",
+      "sources": [
+        "https://github.com/michaeljabbour/opencode-amplifier/blob/27b6bbf052bf09f62086c1cb3b30103d8714bc13/src/runtime/client.ts",
+        "https://github.com/michaeljabbour/opencode-amplifier/blob/27b6bbf052bf09f62086c1cb3b30103d8714bc13/src/runtime/contracts.ts",
+        "https://github.com/michaeljabbour/opencode-amplifier/blob/27b6bbf052bf09f62086c1cb3b30103d8714bc13/src/plugin/hooks.ts"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "amplifier-new-ui",
+      "source_revision": "f5702893673a465e311b2ed3592f2c97fc70f65b",
+      "exact_paths": [
+        "bundle.md",
+        "context/ui-instructions.md"
+      ],
+      "finding": "Instruction-only bundle in the captured tree, not an implemented UI renderer. Retain its source/learning separately.",
+      "sources": [
+        "https://github.com/michaeljabbour/amplifier-new-ui/blob/f5702893673a465e311b2ed3592f2c97fc70f65b/bundle.md",
+        "https://github.com/michaeljabbour/amplifier-new-ui/blob/f5702893673a465e311b2ed3592f2c97fc70f65b/context/ui-instructions.md"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "visualcodex",
+      "source_revision": "bc1640412a3a19a34922d11315576d0213732ab1",
+      "exact_paths": [
+        "src/main/main.ts",
+        "src/renderer/components/InputArea.tsx",
+        "src/shared/types/index.ts"
+      ],
+      "finding": "Independent desktop interaction experiment; compare approval/composer and process boundaries before harvesting.",
+      "sources": [
+        "https://github.com/michaeljabbour/visualcodex/blob/bc1640412a3a19a34922d11315576d0213732ab1/src/main/main.ts",
+        "https://github.com/michaeljabbour/visualcodex/blob/bc1640412a3a19a34922d11315576d0213732ab1/src/renderer/components/InputArea.tsx",
+        "https://github.com/michaeljabbour/visualcodex/blob/bc1640412a3a19a34922d11315576d0213732ab1/src/shared/types/index.ts"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    },
+    {
+      "repository": "workspaces-spa",
+      "source_revision": "e9aac225760e557f10125a5ba4f564d270347a51",
+      "exact_paths": [
+        "spa/chat_state.js",
+        "spa/markdown-worker.js",
+        "spa/markdown.js",
+        "api/provider.py"
+      ],
+      "finding": "Lean streaming/chat/Markdown-worker experiment; its provider path is not assumed runtime-compatible.",
+      "sources": [
+        "https://github.com/michaeljabbour/workspaces-spa/blob/e9aac225760e557f10125a5ba4f564d270347a51/spa/chat_state.js",
+        "https://github.com/michaeljabbour/workspaces-spa/blob/e9aac225760e557f10125a5ba4f564d270347a51/spa/markdown-worker.js",
+        "https://github.com/michaeljabbour/workspaces-spa/blob/e9aac225760e557f10125a5ba4f564d270347a51/spa/markdown.js",
+        "https://github.com/michaeljabbour/workspaces-spa/blob/e9aac225760e557f10125a5ba4f564d270347a51/api/provider.py"
+      ],
+      "test_scope": "See the conformance report; existence of tests is not an executed parity result."
+    }
+  ],
+  "retirement_boundary": "No original body or repository removed. Disposable no-body import/behavior tests improve retirement readiness; a supported consumer/package migration and full acceptance still govern an actual removal.",
+  "preserved_independent_foundations": "Foundation/Core and modular data/storage owners remain separate; this work does not fold a storage foundation into a skill or UI."
+}

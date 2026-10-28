@@ -139,3 +139,7 @@ uv run amplifier-runtime serve --help
 The runtime never imports Textual, prompt-toolkit, Tauri, SolidJS, or client
 rendering code. Protocol changes require schema/fixture tests and compatibility
 validation through the TUI and Studio adapters.
+
+## Client contract and consolidation evidence
+
+The [source and conformance review](docs/consolidation/CLIENT-BOUNDARY.md) distinguishes the existing active runtime delegation from inert migration copies and retains nine surface-specific source reviews. Generate or check the data schema directly from the runtime models with `python -m amplifier_runtime.client_contract`; this does not create a session or replace serve control semantics.
